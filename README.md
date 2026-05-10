@@ -6,9 +6,21 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 
 ## Status
 
-**Phase 0 — Foundation. M0.1 (this PR): monorepo + Docker + Makefile scaffold.**
+**Phase 0 — Foundation. In progress.** M0.1 monorepo scaffold, M0.2 Postgres schema + Alembic, M0.3 FastAPI shell + JWT scaffolding, and M0.4 Next.js 16.2.6 shell + disclaimer gate have all merged. CI pipelines (M0.5), engine types (M0.6), and end-to-end smoke (M0.7) are next.
 
-Phase 1 (engine MVP) starts after M0.1–M0.7 land. See the v1.2 plan for the full 5-phase roadmap; section §22 is the canonical correction sheet.
+Phase 1 (engine MVP) starts after M0.7. See the v1.2 plan for the full 5-phase roadmap; section §22 is the canonical correction sheet.
+
+## Documentation
+
+Read [`docs/`](./docs/) before any code change:
+
+- [`docs/engineering-principles.md`](./docs/engineering-principles.md) — **mandatory** principles + project rules.
+- [`docs/architecture.md`](./docs/architecture.md) — layer cake + component map + data flow.
+- [`docs/ssot-constants-map.md`](./docs/ssot-constants-map.md) — canonical home for every shared constant.
+- [`docs/disclaimers.md`](./docs/disclaimers.md) — full educational-use disclaimer text.
+- [`docs/decisions/`](./docs/decisions/) — ADRs (engine-first, regime taxonomy, confidence composer, ...).
+
+The full development plan v1.2 lives in the Hyperagent thread `cmokf2twq0gsv06adlij0glqs`.
 
 ## Repo layout
 

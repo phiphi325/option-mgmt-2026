@@ -1,9 +1,0 @@
-# docs — architecture, ops, runbooks
-#
-# Future contents:
-#   architecture.md       (M0.7 — layer cake + data flow per plan §5)
-#   engine.md             (M1.x — engine taxonomy, regime spec, formulas)
-#   operations.md         (P2 — deployment, runbooks, on-call)
-#   data-formats.md       (M1.x — CSV import shapes per plan §10 / §21)
-#   models/               (Phase 4 — ML model cards)
-#   disclaimers.md        (compliance text injected into UI footer)
