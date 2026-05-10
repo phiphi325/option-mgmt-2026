@@ -12,6 +12,47 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [0.5.0] — 2026-05-10
+
+### Added (engine — `engine.scoring`)
+
+- **`scoring.iv_score()`** — composite IV-favorability score in `[0, 1]` from `iv_rank`, `iv_percentile`, `hv_30`, `atm_iv_30d`. Higher = more favorable for selling premium.
+  - rank component (weight 0.40), percentile component (weight 0.30), IV/HV premium component (weight 0.30; ratio anchors 0.7 → 0.0, 1.5 → 1.0).
+  - Constant-prices fallback (`hv_30 == 0`) → premium component clamps to 0.5 (the "no information" prior).
+- **`scoring.structure_score()`** — composite options-structure score in `[0, 1]` from `oi_walls`, `max_pain`, `spot`, `expected_move_pct`, `dte_to_nearest_opex`. Higher = more constrained structural environment.
+  - wall proximity (weight 0.30) — distance to nearest OI wall normalized by 2·EM
+  - pin alignment (weight 0.25) — distance from spot to max_pain normalized by EM
+  - opex proximity (weight 0.20) — `[NEAR=2, FAR=14]` trading-day band
+  - EM containment (weight 0.25) — `[TIGHT=2%, WIDE=10%]` band
+  Handles one-sided walls (only support OR resistance present), zero-EM (zero-DTE) edge case correctly.
+- **`scoring.event_score()`** — composite event-uncertainty score in `[0, 1]` from `days_to_event`, `event_kind`, `event_history`. Higher = larger event-driven risk premium in the chain.
+  - Multiplicative proximity gate: `days_to_event is None` or `>= 30` collapses score to 0.
+  - Inner blend: `0.5 · kind_weight + 0.5 · magnitude` where magnitude saturates at `avg_abs_return_pct ≥ 5%`.
+  - Negative `days_to_event` (event already past) clamps to 0 (defensive — event-calendar service should advance promptly).
+- **`scoring.OiWalls`** — frozen dataclass holding OI-derived support/resistance levels. Either side may be `None`; `structure_score` handles missing walls correctly. Produced by Flow Score Engine in M1.5; consumed by `structure_score` here.
+- **`scoring.EventStats`** — frozen dataclass holding historical event-day stats (`avg_abs_return_pct`, `iv_runup_pct`, `sample_count`).
+- **`scoring.EventKind`** — `StrEnum` of recognized event kinds (`earnings`, `fomc`, `cpi`, `guidance`, `ex_dividend`, `other`).
+- **`scoring.EVENT_KIND_WEIGHTS`** — V1 weight prior table (`earnings=1.0`, `fomc=0.7`, `cpi=0.6`, `guidance=0.5`, `ex_dividend=0.3`, `other=0.5`). Replaced in Phase 4 by the M4.5 event-impact estimator (per plan §16).
+- **Result types**: `IvScoreResult`, `StructureScoreResult`, `EventScoreResult`. Each carries `score: float ∈ [0, 1]` plus a `breakdown: dict[str, float]` mapping component names to their values (consumed by Confidence Composer for explainability per §22.13).
+
+### Changed
+
+- `engine.__init__` re-exports the new scoring symbols.
+- 59 new tests (121 → 180 total in `packages/engine/tests/`). 100% line coverage on `engine.scoring` (per plan v1.2 §9.11 acceptance bar).
+
+### CI
+
+- New step `Coverage check (engine.scoring 100%)` enforces the 100% line-coverage requirement from plan v1.2 §9.11 via `pytest --cov=engine.scoring --cov-fail-under=100`.
+- `pytest-cov` added to `packages/engine/pyproject.toml` dev dependencies.
+
+### Plan refs
+
+v1.2 §9.11 (Scoring Functions Module spec), §17 M1.4a (size M), §22.5 (`clip01` reuse), §22.13 (breakdown for Confidence Composer).
+
+PR: [#28](https://github.com/csupenn/option-mgmt-2026/pull/28)
+
+---
+
 ## [0.4.0] — 2026-05-10
 
 ### Added (engine — `engine.market_state`)

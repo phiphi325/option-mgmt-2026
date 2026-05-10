@@ -121,6 +121,19 @@ jobs:
         working-directory: packages/engine
         run: uv run pytest -q
 
+      - name: Coverage check (engine.scoring 100%)
+        # Plan v1.2 §9.11 acceptance bar: scoring primitives ship at 100% line
+        # coverage. M1.4a (iv/structure/event) is the first scoring module to
+        # land; M1.5a (gamma) extends. The gate sits on the package, not on
+        # individual files, so adding new scoring primitives keeps the same
+        # CI step as long as their tests cover all lines.
+        working-directory: packages/engine
+        run: |
+          uv run pytest -q \
+            --cov=engine.scoring \
+            --cov-fail-under=100 \
+            --cov-report=term-missing
+
       - name: Shared-types codegen drift check
         working-directory: packages/engine
         # --check exits non-zero if packages/shared-types/src/*.ts is out of sync

@@ -13,17 +13,39 @@ from __future__ import annotations
 
 from engine.profiles import IncomeNeed, RiskTolerance, UserStrategyProfile
 from engine.regimes import REGIME_COLORS, Regime
+from engine.scoring import (
+    EVENT_KIND_WEIGHTS,
+    EventKind,
+    EventScoreResult,
+    EventStats,
+    IvScoreResult,
+    OiWalls,
+    StructureScoreResult,
+    event_score,
+    iv_score,
+    structure_score,
+)
 from engine.types import ChainSnapshot, OptionContract, OptionType
 from engine.version import __version__
 
 __all__ = [
+    "EVENT_KIND_WEIGHTS",
     "REGIME_COLORS",
     "ChainSnapshot",
+    "EventKind",
+    "EventScoreResult",
+    "EventStats",
     "IncomeNeed",
+    "IvScoreResult",
+    "OiWalls",
     "OptionContract",
     "OptionType",
     "Regime",
     "RiskTolerance",
+    "StructureScoreResult",
     "UserStrategyProfile",
     "__version__",
+    "event_score",
+    "iv_score",
+    "structure_score",
 ]
