@@ -1,6 +1,0 @@
-# packages/shared-types — TS types generated from Pydantic
-#
-# Bootstrapped in M0.4 with placeholder `export {}` (per v1.2 §22.15 L1).
-# Real generation script lands in M0.6 via datamodel-code-generator,
-# producing src/index.ts mirroring the canonical schemas in
-# packages/engine/engine/types.py.

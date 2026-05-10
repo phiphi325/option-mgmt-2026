@@ -1,0 +1,12 @@
+# Build artifacts
+.next/
+out/
+dist/
+build/
+
+# Test artifacts
+coverage/
+
+# Misc
+.env*.local
+*.tsbuildinfo

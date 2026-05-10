@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+dist
+.git
+.gitignore
+.env*.local
+*.tsbuildinfo
+coverage
+tests
+README.md
+.vscode
+.idea
