@@ -16,8 +16,8 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 | ✅ | M0.4 — Next.js 16.2.6 shell, Disclaimer gate, Tailwind, Vitest | [#4](https://github.com/csupenn/option-mgmt-2026/pull/4) |
 | ✅ | docs foundation + 6 ADRs (engineering principles + architecture + SSOT map) | [#5](https://github.com/csupenn/option-mgmt-2026/pull/5) |
 | ✅ | M0.5 — CI pipelines + pre-commit + Dependabot + policy guards | [#6](https://github.com/csupenn/option-mgmt-2026/pull/6) |
-| 🟡 | M0.6 — Engine types: regimes, profiles, ChainSnapshot, TS type generation | [#17](https://github.com/csupenn/option-mgmt-2026/pull/17) (open) |
-| ⬜ | M0.7 — End-to-end smoke test | — |
+| ✅ | M0.6 — Engine types: regimes, profiles, ChainSnapshot, TS type generation | [#17](https://github.com/csupenn/option-mgmt-2026/pull/17) |
+| 🟡 | M0.7 — End-to-end smoke test | [#22](https://github.com/csupenn/option-mgmt-2026/pull/22) (open) |
 
 **Phase 1 (engine MVP)** starts after M0.7. See the v1.2 plan for the full 5-phase roadmap; section §22 is the canonical correction sheet.
 
@@ -28,7 +28,7 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 | Python | **3.14** ([ADR-0007](./docs/decisions/0007-python-version-pin.md)) | `apps/api/.python-version`, `pyproject.toml`, `apps/api/Dockerfile` |
 | Next.js | **16.2.6** ([ADR § plan v1.2 §22.1](./docs/ssot-constants-map.md)) | `apps/web/package.json` + `scripts/check_next_version.sh` |
 | React | `^19.0.0` (paired with Next 16) | `apps/web/package.json` |
-| Node | `22.x` (web runtime) | `apps/web/Dockerfile` |
+| Node | `26.x` (web runtime) | `apps/web/Dockerfile` |
 | pnpm | `9.12.0` (Docker), `10.x` accepted in dev | `apps/web/Dockerfile` |
 | PostgreSQL | `16-alpine` | `docker-compose.yml` |
 | Tailwind | `^3.4` | `apps/web/package.json` |
@@ -67,7 +67,7 @@ packages/
       generate.py   # the codegen — single source of truth bridge
 seeds/csv/          # local-dev seed data per §21 of the plan           [M1.x]
 docs/               # principles, architecture, ADRs, SSOT map          [shipped]
-scripts/            # dev tooling + CI guards                            [shipped M0.4–M0.5]
+scripts/            # dev tooling + CI guards + run_smoke.sh (M0.7)      [shipped M0.4–M0.7]
 .github/workflows/  # CI                                                [shipped M0.5]
 docker-compose.yml  # Phase 1 simplified (postgres + api + web)
 Makefile            # common dev commands
@@ -107,9 +107,10 @@ The full Helen-shaped seed lands in M1.x; for now `scripts/seed_local.py` is a s
 | Command | Effect |
 |---|---|
 | `make dev` | `docker compose up` |
-| `make test` | pytest + vitest (post-M0.5) |
-| `make lint` | ruff + eslint (post-M0.5) |
-| `make typecheck` | mypy --strict + tsc --noEmit (post-M0.5) |
+| `make test` | pytest (api + engine) + vitest (web) |
+| `make smoke` | end-to-end smoke: postgres + alembic + uvicorn + httpx pytest [M0.7+] |
+| `make lint` | ruff (api + engine) + eslint (web) |
+| `make typecheck` | mypy --strict (api + engine) + tsc --noEmit (web + shared-types) |
 | `make migrate` | alembic upgrade head |
 | `make clean` | down volumes, prune build artifacts |
 
@@ -121,8 +122,9 @@ Every PR runs through GitHub Actions (`.github/workflows/ci.yml`):
 - **api** — ruff + mypy --strict + pytest
 - **engine** — ruff + mypy --strict + pytest + shared-types codegen drift check
 - **web** — eslint + tsc + vitest + next build (apps/web), tsc (packages/shared-types)
+- **smoke** — real Postgres + alembic upgrade + uvicorn + httpx pytest (M0.7+)
 
-Locally, `pre-commit install` wires the same guards as git hooks.
+Locally, `pre-commit install` wires the same guards as git hooks. Run the cross-stack smoke test locally with `make smoke` (requires Docker).
 
 After editing any engine type (`packages/engine/engine/{regimes,profiles,types,version}.py`):
 

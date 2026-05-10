@@ -33,6 +33,12 @@ package = false
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 asyncio_mode = "auto"
+markers = [
+    # End-to-end smoke tests (M0.7+) that require a live API + Postgres
+    # via SMOKE_API_URL. Skipped by default; run with `make smoke` or
+    # `pytest -m smoke` (with SMOKE_API_URL exported).
+    "smoke: end-to-end smoke tests requiring a running API (M0.7+)",
+]
 
 [tool.ruff]
 # Inherit from root pyproject.toml (line-length, target-version, lint rules).

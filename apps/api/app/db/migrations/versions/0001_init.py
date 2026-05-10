@@ -13,7 +13,13 @@ per plan v1.2 §6, with the v1.2 §22 corrections folded in:
     explanation; no legacy dealer_gamma_proxy column).
   - §22.14 / M4: outcomes.actual_regime_realized typed as the regime enum.
   - §22.15 / L5: lots.ltcg_eligible_at = opened_at + interval '1 year' + interval '1 day'
-    (handles leap years correctly per IRS "more than one year" rule).
+    (handles leap years correctly per IRS "more than one year" rule). The
+    expression is UTC-anchored — Postgres requires GENERATED STORED columns
+    to be strictly IMMUTABLE, but `timestamptz + interval` is only STABLE
+    because interval arithmetic on tz-aware timestamps reads the session
+    TimeZone (DST-aware). Casting to UTC before/after the calendar math
+    makes the expression deterministic and matches the IRS rule's intent
+    (the rule is calendar-based and TZ-independent).
   - §22.5: iv_history extended with high/low/close columns required by the
     Wilder ADX trend_strength computation.
 
@@ -121,8 +127,17 @@ def upgrade() -> None:
             opened_at     timestamptz NOT NULL,
             -- IRS "more than one year" rule. v1.2 §22.15 L5: handles leap years
             -- correctly; '+ 366 days' would be wrong on leap-year acquisitions.
-            ltcg_eligible_at timestamptz GENERATED ALWAYS AS
-                (opened_at + interval '1 year' + interval '1 day') STORED
+            --
+            -- Postgres requires GENERATED STORED expressions to be IMMUTABLE.
+            -- `timestamptz + interval '1 year'` is only STABLE because interval
+            -- arithmetic on tz-aware timestamps reads the session TimeZone (DST).
+            -- Anchoring the calculation to UTC (cast → calendar math → cast back)
+            -- makes the expression strictly immutable and matches the IRS rule's
+            -- calendar-day intent (the rule is TZ-independent by design).
+            ltcg_eligible_at timestamptz GENERATED ALWAYS AS (
+                ((opened_at AT TIME ZONE 'UTC')
+                    + interval '1 year' + interval '1 day') AT TIME ZONE 'UTC'
+            ) STORED
         );
         """
     )
