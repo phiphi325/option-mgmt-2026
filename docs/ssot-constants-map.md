@@ -104,6 +104,22 @@ When the text changes, all consumers update in the same PR. M0.6+ extracts the c
 - TypeScript (display only): `apps/web/lib/api.ts` reads `weights_version` from `/version` response
 - These don't need to match locally — backend is authoritative; frontend just renders.
 
+## Future enhancement modules (per ADR-0008)
+
+Constants and contracts for adopted enhancements (E1–E9) land here as the work ships. The canonical adoption record is [ADR-0008](./decisions/0008-enhancement-adoption-roadmap.md); the per-enhancement assessment is [`docs/enhancements/0001-assessment-and-adoption-decisions.md`](./enhancements/0001-assessment-and-adoption-decisions.md).
+
+| Phase | Enhancement | Constants will live in |
+|---|---|---|
+| 1.5 | E1 GEX | `packages/engine/engine/gex/` (`GexResult`, regime tags); requires follow-up ADR amending FlowScore V1 contract (replaces `dealer_gamma_proxy` with `gex_context`) |
+| 2 | E2 Vol Surface + E5 Vol Premium | `packages/engine/engine/vol_surface/` (term-structure slope literals, skew constants); `packages/engine/engine/scoring/vol_premium.py` (premium percentile tags) |
+| 2 | E3 partial (2D PnL + scenarios) | `packages/engine/engine/payoff/surface.py`; `MSFT_DEFAULT_SCENARIOS` 7-row constant lives there |
+| 2–3 | E4 Earnings Gap (display-only) | `packages/engine/engine/scoring/earnings_gap.py`; default weights YAML versioned `v1.0` |
+| 2–3 | E8 Dividend-Aware Pricing | `packages/engine/engine/payoff/dividend.py`; `DividendSchedule` table seeds for MSFT |
+| 3 | E9 Assignment Risk | `packages/engine/engine/assignment/`; lot-selection heuristics (FIFO default, ltcg_aware override) |
+| 3 | E3 remainder (3D surface) | `apps/web/app/payoff/page.tsx` only — engine math is already in place from Phase 2 |
+
+Deferred (E6 Multi-Expiry, E7 Backtest) remain in the spec but do not have a registered home. Re-evaluate post-Phase-3.
+
 ## Open gaps
 
 - **engine_version + weights_version ownership** — currently lives in `Settings` (apps/api). M0.6 ships `packages/engine/engine/version.py:__version__`; the next API change should make `Settings` import from `engine.version` rather than carry its own value. Tracked for M1.x (when first decision endpoint lands).

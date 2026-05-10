@@ -13,6 +13,7 @@ Locked decisions for the option-mgmt-2026 codebase. Each ADR is short (1 page) a
 | [0005](./0005-engine-pure-function-discipline.md) | `packages/engine` pure-function discipline (no I/O) | Accepted | v1.2 §1 + §5 + §16 |
 | [0006](./0006-rfc-7807-error-envelope.md) | RFC 7807 ProblemDetails as universal API error shape | Accepted | v1.2 §7 |
 | [0007](./0007-python-version-pin.md) | Python 3.14 pinned across api + engine | Accepted | v1.2 §17 M0.5, §22.15 |
+| [0008](./0008-enhancement-adoption-roadmap.md) | Enhancement-spec adoption roadmap (E1–E9) | Accepted | addendum to v1.2; see [`docs/enhancements/`](../enhancements/) |
 
 ## Adding an ADR
 
