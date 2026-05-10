@@ -12,6 +12,88 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [0.10.0] — 2026-05-10
+
+### Added (engine — `engine.greeks`)
+
+- **`greeks.delta()`** — Black-Scholes-Merton delta for European options with continuous dividend yield. Signature: `delta(*, spot, strike, tau, iv, r, q, option_type) -> float`. Call: `Δ_c = e^(-qτ) · N(d1)` in `(0, 1)`. Put: `Δ_p = -e^(-qτ) · N(-d1)` in `(-1, 0)`. Standard equity-option convention (call deltas positive, put deltas negative). Validated property: put-call parity `Δ_c - Δ_p = e^(-qτ)` holds for any valid input (asserted via Hypothesis with 100 examples).
+- **`greeks.gamma()`** — BSM gamma; identical for calls and puts. `Γ = e^(-qτ) · n(d1) / (S · σ · √τ)`. Peaks near ATM.
+- **`greeks.vega()`** — BSM vega per 1-unit IV change. `ν = S · e^(-qτ) · n(d1) · √τ`. Divide by 100 for "per 1% IV". Increases with `√τ`.
+- **`greeks.theta()`** — BSM theta per year. Both call and put are negative for typical inputs (time decay). Divide by 365 for "per calendar day" or by 252 for "per trading day".
+- **`greeks.rho()`** — BSM rho per 1-unit rate change. Call positive, put negative. Divide by 100 for "per 1%".
+- **`greeks.time_to_expiry_years()`** — Year-fraction time-to-expiry using CBOE 365-day convention: `τ = max((expiry - as_of).days, 1) / 365.0`. The 1-day floor keeps BS math defined on expiration-day chains (defensive — the data layer should filter expired contracts upstream).
+
+All Greeks are pure functions (per [ADR-0005](./docs/decisions/0005-engine-pure-function-discipline.md)) — no I/O, no DB, no clock, no env. Standard normal CDF / PDF implemented via stdlib `math.erf` and `math.exp` (no scipy dependency — keeps the engine's dependency surface minimal).
+
+Validation surface: every Greeks function raises `ValueError` on non-positive `spot`, `strike`, `tau`, or `iv`. `r` and `q` accept any real value (negative rates are legal — e.g. Eurozone).
+
+### Changed (engine — `engine.flow_score.skew`)
+
+- **`skew_25d()` V1 stub replaced with the real implementation.** The function now uses `engine.greeks.delta` to identify the strike whose BS delta is closest to ±0.25 on each side of the chain for each focus expiry. Per-strike IV is used for that strike's delta (the empirical smile is honored, not flattened to ATM vol). Per-expiry skew = `IV(25-Δ put) − IV(25-Δ call)`. Final value = average across qualifying focus expiries.
+- **Signature change (additive — backward-compatible at the source level via `compute()` defaults):** `skew_25d` now requires `spot` and `as_of`, and accepts optional `risk_free_rate` (default `0.05`) and `dividend_yield` (default `0.0`). Direct callers of `skew_25d` must pass the new positional arguments; `compute()` was updated to thread them from `chain_snapshot.as_of` plus its own new `risk_free_rate` / `dividend_yield` kwargs.
+- Edge cases preserved gracefully: empty `expiry_focus` → 0; expiries with no contracts or only one side → skipped; contracts with `iv=None` or `iv=0` → filtered; flat smile → 0 (no smile = no skew).
+- The historic V1 stub returned 0 unconditionally. With M1.6 the 0.20-weight skew component is now **active** in `compute()` and contributes proportionally to the bullish/bearish formulas per §9.3a. The bullish/bearish score range expands from `[0, 65]` to `[0, 85]` (both sides). **No threshold recalibration was needed** — the existing bias and decision-tree thresholds were calibrated assuming the full 5-component formula, so they fit naturally as components come online (per the design promise made in the M1.5b tutorial §9.1).
+
+### Changed (engine — `engine.flow_score.compute`)
+
+- **`compute()` signature extended (additive, backward-compatible):** accepts optional `risk_free_rate: float = 0.05` and `dividend_yield: float = 0.0` kwargs. Both default to V1 priors matching the early-2026 SOFR baseline and a sensible MSFT-class default. The values are threaded to the M1.6 `skew_25d` for BS delta computation. Existing callers that omit these kwargs get the same priors.
+- Internal step 4 ("V1 stubs") renamed to "skew + basis stub" — `skew_25d` is now an active producer, only `futures_basis` remains a stub awaiting Phase 2.
+- 1 test in `test_flow_score_compute.py` refactored to cover the new M1.6 `skew_25d` edge cases (one test split into two: `test_skew_25d_returns_zero_when_no_focus` and `test_skew_25d_returns_zero_with_only_calls`). All 7 `compute()` integration tests and the Hypothesis property test continue to pass — the existing synthetic chains use `iv=0.30` on every contract (flat smile), so the real skew computes to 0 and the M1.5b worked-example numbers are preserved.
+
+### Changed (engine — `engine.__init__`)
+
+- New top-level re-exports: `delta`, `gamma`, `vega`, `theta`, `rho`, `time_to_expiry_years` from `engine.greeks`. The Greek `gamma` does NOT collide with the `gamma_score` re-export from `engine.scoring` — they have distinct names.
+
+### Tests
+
+- 43 new tests in `packages/engine/tests/test_greeks.py`:
+  - 4 `time_to_expiry_years` tests (typical 30-day, 1-year, same-day floor, past-expiry floor).
+  - 5 `_norm_cdf` / `_norm_pdf` sanity tests (zero, symmetry, known percentiles).
+  - 7 `delta` hand-computed reference tests (ATM call/put 30 DTE 30% vol matched to textbook, deep ITM, deep OTM, bound checks, dividend yield shift).
+  - 1 Hypothesis property test (100 examples) asserting `Δ_c − Δ_p = e^(−qτ)` (put-call parity for delta).
+  - 3 `gamma` tests (ATM positive, always positive, peaks-near-ATM).
+  - 3 `vega` tests (ATM positive, always positive, increases with √τ).
+  - 3 `theta` tests (call ATM negative, put ATM negative, OTM less-negative).
+  - 2 `rho` tests (call positive, put negative).
+  - 8 validation tests covering every bound that raises (`spot`, `strike`, `tau`, `iv` × every Greek).
+  - 2 25-Δ strike-selection smoke tests (call 25-Δ above spot; put 25-Δ below spot) demonstrating the use case `skew_25d` consumes.
+  - **100% line coverage** on `engine.greeks`.
+
+- 13 new tests in `packages/engine/tests/test_flow_score_skew.py`:
+  - Baseline: flat smile → 0 skew.
+  - Put-side rich: positive skew (bearish flow); call-side rich: negative skew.
+  - Typical equity smile (downward-sloping puts; flatter calls) → +0.05 skew at the 25-Δ wings.
+  - Multi-expiry averaging.
+  - Edge cases: empty focus, only-calls, only-puts, `iv=None` filtered, `iv=0` filtered.
+  - Validation: non-positive spot rejected.
+  - `dividend_yield` override changes 25-Δ strike selection.
+  - End-to-end integration: `compute()` propagates `chain_snapshot.as_of` + `spot` to `skew_25d` and the breakdown's `bearish_skew` reflects the real value.
+  - **100% line coverage** on `engine.flow_score.skew`.
+
+- 58 `test_flow_score_compute.py` tests preserved (the one stub-specific test refactored into two). M1.5b synthetic chain numerics unchanged because all test fixtures use flat IV.
+
+### Docs
+
+- `docs/tutorials/flow-score-engine.md` updated to reflect M1.6:
+  - Header: engine version coverage now lists `0.9.0` AND `0.10.0`; mentions `engine.greeks` module.
+  - §1.3 design objective 3 (forward-compat): rewritten to note skew is now active and only `futures_basis` remains a stub.
+  - §3 orchestrator step 4: renamed "Stubs" → "Skew (active, M1.6) + basis stub".
+  - §4.3 Component 3 (IV skew): rewritten — header now says "active from M1.6", new content explains the smile-aware 25-Δ strike-selection procedure with signature, the V1 priors for r/q, and the smile-aware vs flat-vol-naive design choice.
+  - §9 V1 stubs: section title kept; §9.1 rewritten to explain why skew was a stub in M1.5b and how M1.6 resolved it (preserving the "no recalibration" promise); §9.2 expanded to be consistent.
+  - §9.4 (validation): note that `skew_25d` now validates `spot > 0` at the boundary.
+  - §10 worked example step 4: now explains why skew=0 on the flat-IV synthetic chain and what a real smile would change.
+  - Exercise 7 rewritten: was "Skew goes live (hypothetical)", now "Skew is live (M1.6)" with a hand-computed example using put-rich IV=0.35 vs call-side IV=0.30.
+  - §12 Further reading: lists the new test files; adds Hull *Options, Futures, and Other Derivatives* for the Greeks reference.
+  - §13 Glossary: `skew` entry updated ("real impl from M1.6"); adds new symbols `Δ_BS(c)`, `τ`, `r`, `q`.
+
+### Plan refs
+
+v1.2 §9 (Greeks module), §9.3 step 3 (skew component), §9.3a (V1 LOCKED contract), §17 M1.6, ADR-0005 (pure-function discipline + SemVer).
+
+PR: [#35](https://github.com/csupenn/option-mgmt-2026/pull/35)
+
+---
+
 ## [0.9.0] — 2026-05-10
 
 ### Added (engine — `engine.flow_score.compute`)

@@ -1,6 +1,6 @@
 """Flow Score Engine — V1 LOCKED `compute()` orchestrator.
 
-Per plan v1.2 §9.3a (V1 LOCKED contract) and §17 M1.5b (size M).
+Per plan v1.2 §9.3a (V1 LOCKED contract), §17 M1.5b (size M), and §17 M1.6.
 
 `compute()` wires the M1.5 primitives + M1.4a/M1.5a scoring primitives
 into a single `FlowScore` result. Internal flow:
@@ -8,7 +8,7 @@ into a single `FlowScore` result. Internal flow:
   1. Compute OI walls (M1.5 `compute_oi_walls`).
   2. Compute max-pain from the chain (M1.2 `compute_max_pain`).
   3. Compute PCR (M1.2 `pcr_volume`, `pcr_oi`).
-  4. Stubs for skew / futures basis (return 0 in V1; see modules).
+  4. Compute 25-Δ skew (M1.6 `skew_25d`) + futures-basis stub.
   5. Compute dealer-gamma proxy (M1.5 `compute_dealer_gamma_proxy`).
   6. Compute `gamma_score` (M1.5a) on that proxy.
   7. Score the 5-component bullish + bearish formulas (§9.3a weights).
@@ -27,11 +27,13 @@ The §9.3a 5-component weights for each side:
     bullish weights: 0.30 + 0.25 + 0.20 + 0.15 + 0.10 = 1.0  →  bullish ∈ [0, 100]
     bearish weights:                  (symmetric)            →  bearish ∈ [0, 100]
 
-In V1, `skew_25d` (the 0.20 component) and `futures_basis` (the 0.15
-component) are stubbed at 0 — see their respective modules. With three
-of five components active, max bullish/bearish each cap at
-`(0.30 + 0.25 + 0.10) * 100 = 65`. The math is forward-compatible:
-when M1.6 (Greeks) and the Phase 2 futures service land, the full
+As of M1.6, `skew_25d` (the 0.20 component) is **active** — it computes
+real 25-delta IV skew using the new `engine.greeks` module. The
+`futures_basis` (the 0.15 component) remains a V1 stub returning 0
+until Phase 2 wires up the futures service. With four of five
+components active, max bullish/bearish each cap at
+`(0.30 + 0.25 + 0.20 + 0.10) * 100 = 85`. The math is
+forward-compatible: when the Phase 2 futures service lands, the full
 5-component math activates without recalibration.
 
 ## Bias thresholds
@@ -233,6 +235,8 @@ def compute(
     spot: float,
     expiry_focus: Sequence[date],
     dte_to_nearest_opex: int | None = None,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
 ) -> FlowScore:
     """V1 Flow Score Engine `compute()` per plan §9.3a.
 
@@ -246,6 +250,13 @@ def compute(
                              Passed through to `sigmoid_pin` to weigh
                              pin probability. `None` (default) when no
                              opex sits in the relevant horizon.
+        risk_free_rate: Continuous-compounding risk-free rate. Default
+                        `0.05` (V1 prior matching the early-2026 SOFR
+                        baseline). Threaded through to `skew_25d` for
+                        BS delta computation.
+        dividend_yield: Continuous-compounding dividend yield. Default
+                        `0.0` (sensible for MSFT-class names). Threaded
+                        through to `skew_25d` for BS delta computation.
 
     Returns:
         `FlowScore` (frozen dataclass) with the full V1 LOCKED contract.
@@ -281,8 +292,15 @@ def compute(
     pcrv = pcr_volume(contracts=focus_contracts)
     pcroi = pcr_oi(contracts=focus_contracts)
 
-    # 4. V1 stubs.
-    skew = skew_25d(contracts=contracts, expiry_focus=expiry_focus)
+    # 4. 25-Δ skew (M1.6 real impl) + futures-basis stub.
+    skew = skew_25d(
+        contracts=contracts,
+        expiry_focus=expiry_focus,
+        spot=spot,
+        as_of=chain_snapshot.as_of,
+        risk_free_rate=risk_free_rate,
+        dividend_yield=dividend_yield,
+    )
     basis = futures_basis(spot=spot)
 
     # 5. Dealer-gamma proxy.

@@ -249,10 +249,25 @@ def test_decide_action_branches(
 # ----------------------------------------------------------------------
 
 
-def test_skew_25d_returns_zero_v1() -> None:
-    """V1 stub always returns 0."""
-    assert skew_25d(contracts=[], expiry_focus=[]) == 0.0
-    assert skew_25d(contracts=[_c(strike=100.0, option_type=OptionType.CALL)], expiry_focus=[_EXPIRY]) == 0.0
+def test_skew_25d_returns_zero_when_no_focus() -> None:
+    """skew_25d returns 0 with empty expiry_focus."""
+    assert (
+        skew_25d(contracts=[], expiry_focus=[], spot=100.0, as_of=date(2026, 5, 10))
+        == 0.0
+    )
+
+
+def test_skew_25d_returns_zero_with_only_calls() -> None:
+    """skew_25d returns 0 when an expiry has only calls (skew undefined without puts)."""
+    assert (
+        skew_25d(
+            contracts=[_c(strike=100.0, option_type=OptionType.CALL)],
+            expiry_focus=[_EXPIRY],
+            spot=100.0,
+            as_of=date(2026, 5, 10),
+        )
+        == 0.0
+    )
 
 
 def test_futures_basis_returns_zero_v1() -> None:

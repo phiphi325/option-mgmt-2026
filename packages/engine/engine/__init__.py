@@ -19,6 +19,14 @@ from engine.flow_score import (
     compute_dealer_gamma_proxy,
     compute_oi_walls,
 )
+from engine.greeks import (
+    delta,
+    gamma,
+    rho,
+    theta,
+    time_to_expiry_years,
+    vega,
+)
 from engine.market_state import MarketStateResult, classify
 from engine.profiles import IncomeNeed, RiskTolerance, UserStrategyProfile
 from engine.regimes import REGIME_COLORS, Regime
@@ -67,8 +75,14 @@ __all__ = [
     "compute",
     "compute_dealer_gamma_proxy",
     "compute_oi_walls",
+    "delta",
     "event_score",
+    "gamma",
     "gamma_score",
     "iv_score",
+    "rho",
     "structure_score",
+    "theta",
+    "time_to_expiry_years",
+    "vega",
 ]

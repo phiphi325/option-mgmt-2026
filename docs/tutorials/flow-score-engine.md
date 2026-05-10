@@ -3,7 +3,7 @@
 > **Audience.** First-year master's students in financial engineering; quant-developer onboarding; anyone consuming `FlowScore` downstream (Recommendation Engine, Today screen UI, Confidence Composer).
 > **Prerequisites.** Read the [Market State Engine tutorial](./market-state-engine.md) and the [Scoring Primitives tutorial](./scoring-primitives.md) first. You should be comfortable with options vocabulary (IV, OI, max pain, expected move, PCR, OI walls), with `clip01`, with the `*ScoreResult` pattern, and with how `gamma_score` splits magnitude from direction.
 > **Reading time.** ~70 min careful read with the exercises; ~30 min skim.
-> **Engine version covered.** `0.9.0` (M1.5b) onward. The orchestrator and supporting primitives live in [`packages/engine/engine/flow_score/`](../../packages/engine/engine/flow_score).
+> **Engine version covered.** `0.9.0` (M1.5b) and `0.10.0` (M1.6) onward. The orchestrator and supporting primitives live in [`packages/engine/engine/flow_score/`](../../packages/engine/engine/flow_score); the Black-Scholes Greeks consumed by the M1.6-activated `skew_25d` live in [`packages/engine/engine/greeks.py`](../../packages/engine/engine/greeks.py).
 >
 > **Disclaimer.** This tutorial is **educational material**. The Flow Score Engine is a decision-support component, not investment advice. See [`docs/disclaimers.md`](../disclaimers.md).
 
@@ -104,11 +104,13 @@ of its own:
    ([ADR-0008](../decisions/0008-enhancement-adoption-roadmap.md)) replaces
    the body of `compute()` with a learned classifier while keeping the
    contract byte-stable.
-3. **Forward-compatible.** Two of the five §9.3a components (`skew_25d`,
-   `futures_basis`) are stubs in V1 returning 0. The math is intentionally
-   sum-and-clip — when the real producers land (M1.6 Greeks + Phase 2
-   futures service), the full 5-component formula activates **without
-   recalibration** of any existing thresholds.
+3. **Forward-compatible.** One of the five §9.3a components
+   (`futures_basis`) remains a V1 stub returning 0; the previous stub
+   for `skew_25d` was replaced with a real Black-Scholes-driven
+   implementation in M1.6 (engine `0.10.0`). The math is intentionally
+   sum-and-clip — the full 5-component formula activates **without
+   recalibration** as each stub is replaced. Phase 2's futures service
+   completes the picture.
 
 ---
 
@@ -267,8 +269,10 @@ The twelve steps, in order:
    to focus contracts ([M1.2 primitives](../../packages/engine/engine/market_state/pcr.py)).
    PCR_v feeds the bullish/bearish formulas; PCR_oi is a diagnostic.
 
-4. **Skew / basis stubs** — `skew_25d(...)` and `futures_basis(spot=spot)`
-   return 0.0 in V1. See [§9](#9-v1-stubs-and-forward-compatibility).
+4. **Skew (active, M1.6) + basis stub** — `skew_25d(...)` computes real
+   25-delta IV skew via [`engine.greeks`](../../packages/engine/engine/greeks.py)
+   (delta-with-each-strike's-own-IV); `futures_basis(spot=spot)` remains
+   a V1 stub returning 0. See [§9](#9-v1-stubs-and-forward-compatibility).
 
 5. **Dealer-gamma proxy** — `compute_dealer_gamma_proxy(contracts, spot,
    expiry_focus)` ([M1.5 primitive](../../packages/engine/engine/flow_score/dealer_gamma.py)).
@@ -417,7 +421,7 @@ Volume (not OI) goes here because volume is the *flow* signal and OI is the
 - `total_oi` (later) feeds confidence (§8).
 - `oi_concentration` (later still) feeds pin probability (§5).
 
-### 4.3 Component 3 — IV skew (weight 0.20, **stub in V1**)
+### 4.3 Component 3 — IV skew (weight 0.20, **active from M1.6**)
 
 The plan formula:
 
@@ -429,10 +433,46 @@ Negative skew means call IV trades richer than put IV — call-side demand
 exceeds put-side, bullish. Positive skew is the put-side fear premium —
 bearish.
 
-In V1, `skew_25d()` returns 0.0 — see [§9](#9-v1-stubs-and-forward-compatibility)
-for the rationale. Both terms are 0, contributing nothing to either side.
-The full math activates when M1.6 ships Black–Scholes Greeks and the
-`skew_25d` body becomes a real 25-delta-strike scan.
+M1.6 shipped the [`engine.greeks`](../../packages/engine/engine/greeks.py)
+Black-Scholes module and replaced the M1.5b `skew_25d` stub with a real
+implementation. The procedure (per `engine/flow_score/skew.py`):
+
+1. For each expiry in `expiry_focus`, compute
+   $\tau = (\text{expiry} - \text{as\_of}) / 365$.
+2. Filter contracts at that expiry with valid IV (`iv != None`, `iv > 0`).
+3. Among calls, pick the strike whose BS delta is closest to $+0.25$ —
+   using each contract's *own* IV (so the empirical smile is honored).
+4. Among puts, pick the strike whose BS delta is closest to $-0.25$.
+5. Per-expiry skew $= \text{IV}_\text{put}(25\Delta) - \text{IV}_\text{call}(25\Delta)$.
+6. Final skew is the average across qualifying expiries.
+
+The function signature is
+
+```python
+skew_25d(
+    *,
+    contracts: Sequence[OptionContract],
+    expiry_focus: Sequence[date],
+    spot: float,
+    as_of: date,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
+) -> float
+```
+
+`compute()` threads `chain_snapshot.as_of`, `spot`, plus optional
+`risk_free_rate` and `dividend_yield` overrides through to `skew_25d`.
+Defaults match the V1 priors: `r = 0.05` (early-2026 SOFR baseline),
+`q = 0.0` (sensible for MSFT-class names; broad-index callers
+should override).
+
+**Smile-aware vs flat-vol naive.** The implementation evaluates each
+strike's BS delta with that strike's *own* implied vol, not a single
+chain-average vol. This matters: at the 25-Δ wings, IV typically
+differs from ATM by several volatility points, and using ATM vol to
+find the wings would mis-identify the strike. The trade-off is
+extra compute (one BS delta call per qualifying contract); the upside
+is the skew the function reports is the genuine wing-to-wing IV gap.
 
 ### 4.4 Component 4 — futures basis (weight 0.15, **stub in V1**)
 
@@ -825,38 +865,43 @@ across a range of synthetic inputs.
 
 ## 9. V1 stubs and forward compatibility
 
-Two of the five §9.3a components — `skew_25d` and `futures_basis` — are
-stubs that return 0.0 in V1. This is a deliberate design choice, not a
-TODO that we forgot.
+One of the five §9.3a components — `futures_basis` — remains a V1 stub
+returning 0.0. The `skew_25d` component was a stub in M1.5b; M1.6
+shipped `engine.greeks` and replaced the stub with a real implementation
+(see §4.3). This section explains the rationale for both — the historic
+stub for skew and the still-active stub for basis.
 
-### 9.1 Why stub `skew_25d`?
+### 9.1 Why `skew_25d` was a stub in M1.5b (and how M1.6 resolved it)
 
 Real 25-delta skew requires identifying the strike where $|\Delta_{BS}| = 0.25$
 for each side of the chain (put and call), at each focus expiry. That
 requires Black–Scholes delta, which requires `r` (risk-free rate),
-`q` (dividend yield), `T` (time to expiry), and a way to interpolate IV
-between sampled strikes when no exact 25-delta strike exists.
+`q` (dividend yield), `T` (time to expiry), and the per-strike IV smile.
 
-All of those land in **M1.6 Greeks**. Until then, faking 25-delta skew with
-any of the alternatives (e.g. "raw IV at $K = 0.95 S$ minus IV at $K = 1.05 S$")
-would either:
+All of those landed in **M1.6**. The Greeks module (`engine.greeks`)
+exposes `delta`, `gamma`, `vega`, `theta`, `rho`, and
+`time_to_expiry_years` as pure functions; `engine/flow_score/skew.py`
+calls `delta(option_type=OptionType.CALL/PUT, ...)` per contract and
+picks the strike whose delta is closest to $\pm 0.25$.
 
-- Be sensitive to strike-grid granularity (different chains would give
+The trade-off the M1.5b stub navigated was *known-zero contribution*
+vs *unknown-biased contribution*. The 0.20 skew weight contributing 0
+was honest. Any approximation (e.g. "raw IV at $K = 0.95 S$ minus IV at
+$K = 1.05 S$") would have been:
+
+- Sensitive to strike-grid granularity (different chains would give
   different "skews" for the same underlying).
 - Drift from the true 25-delta-skew calibration that Phase 4 ML will use.
 
-The stub trades a *known-zero contribution* for an *unknown-biased
-contribution*. The first is honest; the second is technical debt.
+The M1.6 implementation honors both the calibration and the
+forward-compatibility promise: **no threshold recalibration was needed**
+when the stub was replaced. The formula sums weighted clipped values, so
+the active 0.20 component naturally raises the realized range of the
+bullish and bearish scores from $[0, 65]$ to $[0, 85]$. The bias and
+action thresholds were set assuming the full 5-component formula, so
+they fit naturally as more components come online.
 
-When M1.6 ships, the only change is replacing the body of `skew_25d()`
-with the real Greeks-based implementation. **No threshold recalibration is
-needed** — the formula sums weighted clipped values, so an active 0.20
-component naturally raises the realized range of the bullish and bearish
-scores from $[0, 65]$ to $[0, 85]$ (or further, with futures). The bias and
-action thresholds were set assuming the full 5-component formula, so they
-fit naturally as more components come online.
-
-### 9.2 Why stub `futures_basis`?
+### 9.2 Why `futures_basis` remains a stub
 
 Phase 1 of option-mgmt-2026 does not provision futures data. The data
 plumbing for ES (S&P 500 futures, MSFT's correlated index) is a Phase 2
@@ -865,13 +910,15 @@ explicitly says "0 if futures unavailable," so the V1 stub honors the
 contract.
 
 When Phase 2 wires up the service, replacing the stub adds the 0.15-weight
-basis contribution to the bullish/bearish formulas. Same arithmetic story
-as skew: the range widens, the thresholds stay.
+basis contribution to the bullish/bearish formulas. Same arithmetic
+story as the M1.6 skew activation: the range widens (from $[0, 85]$ to
+$[0, 100]$), the thresholds stay.
 
 ### 9.3 The `bullish_skew` and `bearish_skew` breakdown keys
 
-Even in V1 with stubs returning 0, the breakdown carries `bullish_skew = 0`
-and `bearish_skew = 0` (likewise for basis). This is intentional: when the
+Even when `skew_25d` was stubbed (M1.5b), the breakdown carried
+`bullish_skew = 0` and `bearish_skew = 0` (likewise for basis). This is
+intentional: when the
 stubs are replaced, the UI's stacked-bar chart of breakdown values smoothly
 gains two new contributions without a schema change. The UI doesn't have
 to know whether a given component is "active" — it just reads the value.
@@ -892,9 +939,12 @@ a negative spot, get 0 back, and then notice silently that their downstream
 formula produced nonsense. The pattern is the same as the rest of the
 engine's input-validation discipline.
 
-`skew_25d` does not validate beyond what the type system guarantees — its
-arguments (`contracts: Sequence[OptionContract]`, `expiry_focus: Sequence[date]`)
-are already typed and the body doesn't use them in V1.
+`skew_25d` (post-M1.6) validates `spot > 0` at the boundary — the same
+pattern as `futures_basis`. Contracts with missing or zero IV are
+filtered internally (BS delta is undefined at `iv = 0`); an expiry with
+no eligible contracts is simply skipped rather than raising, on the
+principle that the engine should degrade gracefully when individual
+expiries are illiquid.
 
 ---
 
@@ -970,9 +1020,17 @@ Restricted to focus contracts:
 - $\sum \text{OI}_{\text{call}} = 1{,}000 + 1{,}000 + 8{,}000 = 10{,}000$
 - $\text{PCR}_{OI} = 600 / 10{,}000 = 0.06$
 
-#### Step 4 — Stubs
+#### Step 4 — Skew (M1.6 real impl) + basis stub
 
-$\text{skew} = 0$; $\text{basis} = 0$.
+The synthetic chain has `iv=0.30` on every contract → flat smile → the
+25-Δ put and 25-Δ call both have IV=0.30 → $\text{skew} = 0.30 - 0.30 = 0$.
+`futures_basis` remains a V1 stub: $\text{basis} = 0$.
+
+If the chain had a real smile (e.g. puts at IV=0.35, calls at IV=0.25),
+`skew_25d` would return $0.35 - 0.25 = 0.10$ and the bearish side of
+the §9.3a formula would pick up $0.20 \cdot 0.10 = 0.02$, i.e. +2 points
+on `bearish_score`. The worked example below uses flat IV precisely
+because it isolates the M1.5b primitives.
 
 #### Step 5 — Dealer-gamma proxy
 
@@ -1150,11 +1208,22 @@ fraction of the V1 saturation point is this? Why does the Confidence
 Composer's multiplicative chain mean this single chain effectively
 flatlines decisions?
 
-### Exercise 7 — Skew goes live
+### Exercise 7 — Skew is live (M1.6)
 
-Suppose M1.6 ships and `skew_25d` starts returning real values. For the
-§10 chain, hand-pick a plausible $\text{skew} = -0.05$ (call-side premium,
-bullish) and recompute the bullish/bearish/score. Does the action change?
+M1.6 shipped — `skew_25d` is now active. The §10 worked example uses a
+synthetic chain where every contract has `iv=0.30`, so the put 25-Δ and
+call 25-Δ strikes both have IV=0.30 and the skew computes to exactly 0
+(no smile = no skew, by definition).
+
+Now imagine an alternate chain identical to §10 except every put has
+`iv=0.35` and every call still has `iv=0.30`. Hand-compute the new
+`bullish_score`, `bearish_score`, signed `score`, and verify the
+`recommended_action`. Does the action change from
+`SELL_CALL_AGGRESSIVE`?
+
+(Hint: the put-side richness gives a positive skew. With skew=+0.05,
+`bearish_skew = max(0, +0.05) = 0.05` contributes $0.20 \cdot 0.05 = 0.01$
+to `bearish_raw`, i.e. +1.0 to `bearish_score`. `bullish_skew = 0`.)
 
 ### Exercise 8 — Explanation invariants
 
@@ -1255,13 +1324,19 @@ multiplicative chain enforces "any one weak signal kills the decision,"
 which is the conservative bias the engine should have when a chain is
 genuinely thin.
 
-**E7.** $\text{bullish\_skew} = \max(0, -(-0.05)) = 0.05$;
-$\text{bearish\_skew} = 0$. New bullish_raw $= 0.6310 + 0.20 \cdot 0.05 = 0.6410$.
-$\text{bullish\_score} = 64.10$. $\text{score} = 64.10 - 16.90 = +47.20$
-(up from +46.20). Still $\geq +40$, gamma still $\leq 0.5$ → action
-unchanged: `SELL_CALL_AGGRESSIVE`. The skew nudge doesn't flip
-the recommendation but does deepen the conviction (5-point increase on a
-100-point scale).
+**E7.** Put-side rich → skew = +0.05 (positive).
+$\text{bullish\_skew} = \max(0, -0.05) = 0$;
+$\text{bearish\_skew} = \max(0, +0.05) = 0.05$.
+New bullish_raw $= 0.6310$ (unchanged from §10 baseline).
+New bearish_raw $= 0.1690 + 0.20 \cdot 0.05 = 0.1790$.
+$\text{bullish\_score} = 63.10$ (unchanged); $\text{bearish\_score} = 17.90$.
+$\text{score} = 63.10 - 17.90 = +45.20$ (down from +46.20).
+Still $\geq +40$, gamma still $\leq 0.5$ → action
+unchanged: `SELL_CALL_AGGRESSIVE`. The put-side skew nudge slightly
+shrinks the bullish lead but doesn't flip the recommendation. M1.6
+proves out the "no recalibration needed" property — pre-existing
+thresholds keep working as the formula's range expands from [-65, +65]
+to [-85, +85].
 
 **E8.** Both the bucketer and the explanation builder use the same
 constant `_PIN_EXPLAIN_THRESHOLD = _BIAS_PIN_THRESHOLD = 0.6`. The
@@ -1319,9 +1394,13 @@ under `packages/engine/engine/`.
   - [`oi_walls.py`](../../packages/engine/engine/flow_score/oi_walls.py) — support/resistance levels.
   - [`dealer_gamma.py`](../../packages/engine/engine/flow_score/dealer_gamma.py) — V1 dealer-gamma proxy.
   - [`pin_probability.py`](../../packages/engine/engine/flow_score/pin_probability.py) — sigmoid_pin estimator.
-  - [`skew.py`](../../packages/engine/engine/flow_score/skew.py), [`futures_basis.py`](../../packages/engine/engine/flow_score/futures_basis.py) — V1 stubs.
+  - [`skew.py`](../../packages/engine/engine/flow_score/skew.py) — 25-Δ IV skew, active from M1.6.
+  - [`futures_basis.py`](../../packages/engine/engine/flow_score/futures_basis.py) — V1 stub awaiting Phase 2 futures service.
   - [`explanation.py`](../../packages/engine/engine/flow_score/explanation.py) — human-readable rationale.
-- [`packages/engine/tests/test_flow_score_compute.py`](../../packages/engine/tests/test_flow_score_compute.py) — 57 tests on `compute()` and its helpers, including a Hypothesis property test asserting bounded outputs across the input space.
+- [`packages/engine/engine/greeks.py`](../../packages/engine/engine/greeks.py) — Black-Scholes-Merton Greeks (delta, gamma, vega, theta, rho, time_to_expiry_years), introduced in M1.6 and consumed by `skew_25d`.
+- [`packages/engine/tests/test_flow_score_compute.py`](../../packages/engine/tests/test_flow_score_compute.py) — 58 tests on `compute()` and its helpers, including a Hypothesis property test asserting bounded outputs across the input space.
+- [`packages/engine/tests/test_flow_score_skew.py`](../../packages/engine/tests/test_flow_score_skew.py) — 13 tests on the M1.6 real `skew_25d` (flat smile, put-rich, call-rich, multi-expiry, edge cases, integration with `compute()`).
+- [`packages/engine/tests/test_greeks.py`](../../packages/engine/tests/test_greeks.py) — 43 tests on the Greeks module (hand-computed references, put-call parity property test via Hypothesis, monotonicity invariants, validation surface).
 - [`packages/engine/engine/_utils.py`](../../packages/engine/engine/_utils.py) — `clip01` used everywhere in this module.
 
 ### External / academic
@@ -1336,7 +1415,10 @@ under `packages/engine/engine/`.
   that established the max-pain-pinning phenomenon at monthly opex.
 - Bollen & Whaley, *Does Net Buying Pressure Affect the Shape of Implied
   Volatility Functions?* (Journal of Finance, 2004) — net-pressure
-  models of skew that the future M1.6 `skew_25d` will be calibrated to.
+  models of skew that the M1.6 `skew_25d` is calibrated to.
+- Hull, *Options, Futures, and Other Derivatives* (10e), chs. 15 + 17 —
+  textbook reference for the Black-Scholes-Merton Greeks the M1.6
+  module implements.
 - Squeeze Metrics / SpotGamma white papers (public versions) — practitioner
   treatment of dealer GEX walls and the vol-amplifier / vol-dampener
   intuition the gamma sign captures.
@@ -1357,8 +1439,11 @@ under `packages/engine/engine/`.
 | $D$ | `gamma_score` normalizer = $S \cdot 10{,}000$ |
 | $\mathcal{W}$ | Set of `GammaWall` records (empty in V1) |
 | $\text{PCR}_v, \text{PCR}_{OI}$ | Put–call ratio by volume / by OI |
-| $\text{skew}$ | 25-delta IV skew = avg over expiries of (IV(25-Δ put) − IV(25-Δ call)); V1 stub = 0 |
+| $\text{skew}$ | 25-delta IV skew = avg over expiries of (IV(25-Δ put) − IV(25-Δ call)); real impl from M1.6 |
 | $\text{basis}$ | Front-month futures basis = (futures − spot) / spot; V1 stub = 0 |
+| $\Delta_{BS}(c)$ | BS delta of contract $c$ at its own IV (used by M1.6 `skew_25d` to find the 25-Δ strikes) |
+| $\tau$ | Time-to-expiry year-fraction = $\max((\text{expiry} - \text{as\_of}).\text{days}, 1) / 365$ |
+| $r, q$ | Continuous-compounding risk-free rate and dividend yield (V1 priors: 0.05, 0.0) |
 | $f_{\text{dist}}, f_{\text{opex}}, f_{\text{oi}}$ | The three factors of `sigmoid_pin` |
 | $p$ | Pin probability = `sigmoid_pin()` output ∈ $[0, 1]$ |
 | $s$ | Signed FlowScore composite ∈ $[-100, +100]$ |
