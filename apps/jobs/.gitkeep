@@ -1,0 +1,6 @@
+# apps/jobs — scheduled ingestion (Phase 2+)
+#
+# Per plan v1.2 §22.7: in Phase 1 the jobs service is consolidated into
+# apps/api/app/jobs/ as stub modules. apps/jobs/ becomes a separate
+# Arq worker process when Phase 2 introduces scheduled chain ingestion,
+# IV backfills, and outcome auto-fill heuristics.

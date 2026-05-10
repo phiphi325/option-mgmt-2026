@@ -1,0 +1,56 @@
+# docker-compose.yml — Phase 1 simplified (no jobs, no redis)
+# Per plan v1.2 §22.7. The api/web Dockerfiles are placeholders in M0.1
+# and replaced in M0.3 (FastAPI shell) and M0.4 (Next.js shell).
+# Phase 2 re-introduces redis + jobs services for scheduled ingestion.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: msft_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d msft_engine"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:dev@postgres:5432/msft_engine
+      JWT_SECRET: dev-secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./packages/engine:/code/packages/engine
+
+  web:
+    build: ./apps/web
+    environment:
+      NEXT_PUBLIC_API_BASE: http://api:8000/api/v1
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+  # Phase 2 — re-add for scheduled ingestion + Arq:
+  # redis:
+  #   image: redis:7-alpine
+  #   ports: ["6379:6379"]
+  # jobs:
+  #   build: ./apps/jobs
+  #   environment:
+  #     DATABASE_URL: postgresql+psycopg://postgres:dev@postgres:5432/msft_engine
+  #     REDIS_URL: redis://redis:6379/0
+  #   depends_on: [postgres, redis]
+
+volumes:
+  pgdata:

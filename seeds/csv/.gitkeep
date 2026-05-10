@@ -1,0 +1,12 @@
+# seeds/csv — local-dev seed data
+#
+# Per plan v1.2 §21, scripts/seed_local.py creates a Helen-shaped fixture:
+#   - 1 user (helen@example.test)
+#   - 5000 shares MSFT @ $400.12 cost basis
+#   - 1 short call (5x C415 expiring 2026-05-16 @ $2.85)
+#   - 60 days IV history (with OHLC for trend_strength per v1.2 §22.5)
+#   - 4 events (earnings, FOMC, OpEx weekly, OpEx monthly)
+#   - chain snapshot covering 3 expiries, ~120 strikes
+#
+# CSV files used by import endpoints (M1.x):
+#   positions.csv, option_positions.csv, chain.csv, iv_history.csv, events.csv

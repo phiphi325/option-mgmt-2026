@@ -1,0 +1,7 @@
+# scripts — dev tooling
+#
+# Future contents (added across Phase 0 + Phase 1):
+#   seed_local.py                  (M1.x — Helen-shaped seed)
+#   check_no_broker_imports.sh     (M0.5 — CI guard, plan §15 / §22)
+#   check_engine_version_bump.sh   (M0.5 — CI guard, v1.2 §22.15 L2)
+#   check_next_version.sh          (M0.4 — CI guard, v1.2 §22.1)

@@ -1,0 +1,6 @@
+# .github/workflows — CI pipelines
+#
+# Wired in M0.5 (per plan §17 and v1.2 §22.15 L1 reordering):
+#   ci.yml             — lint (ruff/eslint) + typecheck (mypy/tsc) + tests + e2e
+#   deploy-staging.yml — Fly + Vercel deploys on merge to staging
+#   deploy-prod.yml    — same to prod, with manual approval gate

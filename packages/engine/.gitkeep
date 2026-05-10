@@ -1,0 +1,13 @@
+# packages/engine — the product (pure-function Python)
+#
+# Submodules (added in Phase 1):
+#   regimes.py, profiles.py, types.py
+#   market_state/, flow_score/, strike_selector/, recommendation/, decision/
+#   confidence/, execution/, outcomes/
+#   collar_builder/        (v1.1 — first-class engine)
+#   scoring/               (v1.1 — iv, structure, gamma, event)
+#   payoff/, scenarios/, providers/
+#   config/                (weights.yaml, rules.yaml)
+#
+# Invariant: NO I/O. NO DB. NO NETWORK. Pure functions only.
+# The API layer (apps/api) hydrates inputs and persists outputs.
