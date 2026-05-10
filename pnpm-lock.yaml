@@ -17,6 +17,9 @@ importers:
       next:
         specifier: 16.2.6
         version: 16.2.6(@babel/core@7.29.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      option-mgmt-shared-types:
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       react:
         specifier: ^19.0.0
         version: 19.2.6

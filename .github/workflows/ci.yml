@@ -5,8 +5,9 @@
 #
 # Job summary:
 #   guards         pin checks (next, engine_version) + no-broker-import check
-#   api            ruff + mypy --strict + pytest (8 tests in M0.5)
-#   web            eslint + tsc + vitest + next build (8 tests in M0.5)
+#   api            ruff + mypy --strict + pytest (apps/api)
+#   engine         ruff + mypy --strict + pytest (packages/engine) + codegen drift check
+#   web            eslint + tsc + vitest + next build + shared-types typecheck
 #
 # Concurrency cancels stale runs on the same branch when new commits land.
 
@@ -59,12 +60,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          # Cache key includes pyproject + uv.lock when present. Once we commit
-          # apps/api/uv.lock (planned post-M0.7), CI builds become bit-reproducible.
           enable-cache: true
           cache-dependency-glob: |
             apps/api/pyproject.toml
             apps/api/uv.lock
+            pyproject.toml
 
       - name: Install Python deps
         # uv reads apps/api/.python-version (3.14) and apps/api/pyproject.toml's
@@ -86,12 +86,50 @@ jobs:
           DATABASE_URL: postgresql+psycopg://postgres:dev@localhost:5432/msft_engine_test
         run: uv run pytest -q
 
+  engine:
+    name: Engine (ruff + mypy + pytest + codegen drift)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            packages/engine/pyproject.toml
+            packages/engine/uv.lock
+            pyproject.toml
+
+      - name: Install engine deps
+        working-directory: packages/engine
+        # uv reads ../../.python-version (root) → 3.14. The engine package has
+        # its own pyproject.toml and is a workspace member of the root uv config.
+        run: uv sync --dev
+
+      - name: Ruff lint
+        working-directory: packages/engine
+        run: uv run ruff check .
+
+      - name: mypy --strict
+        working-directory: packages/engine
+        run: uv run mypy --strict engine
+
+      - name: pytest
+        working-directory: packages/engine
+        run: uv run pytest -q
+
+      - name: Shared-types codegen drift check
+        working-directory: packages/engine
+        # --check exits non-zero if packages/shared-types/src/*.ts is out of sync
+        # with packages/engine/engine/{regimes,profiles,types}.py. Run the
+        # generator without --check, commit the regenerated .ts to fix.
+        run: uv run python ../shared-types/scripts/generate.py --check
+
   web:
     name: Web (eslint + tsc + vitest + build)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/web
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -110,21 +148,29 @@ jobs:
           # — a single workspace lockfile covers all apps/ + packages/ members.
           cache-dependency-path: 'pnpm-lock.yaml'
 
-      - name: Install web deps
-        # --frozen-lockfile fails if pnpm-lock.yaml doesn't match package.json
-        # — exactly what we want in CI: drift detection.
+      - name: Install workspace deps
+        # Install from root so workspace deps (option-mgmt-shared-types) link correctly.
+        # --frozen-lockfile fails if pnpm-lock.yaml doesn't match — drift detection.
         run: pnpm install --frozen-lockfile
 
-      - name: ESLint
-        run: pnpm lint
-
-      - name: tsc --noEmit
+      - name: Typecheck shared-types
+        working-directory: packages/shared-types
         run: pnpm typecheck
 
-      - name: Vitest
+      - name: ESLint (apps/web)
+        working-directory: apps/web
+        run: pnpm lint
+
+      - name: tsc --noEmit (apps/web)
+        working-directory: apps/web
+        run: pnpm typecheck
+
+      - name: Vitest (apps/web)
+        working-directory: apps/web
         run: pnpm test
 
       - name: Next build (smoke check)
+        working-directory: apps/web
         env:
           NEXT_TELEMETRY_DISABLED: '1'
         run: pnpm build

@@ -1,0 +1,47 @@
+[project]
+name = "option-mgmt-engine"
+version = "0.1.0"
+description = "MSFT Option Risk Management Engine — pure-function decision engine (no I/O)"
+requires-python = ">=3.14"
+dependencies = [
+    # Pydantic is the only runtime dep at M0.6. Numerical libs (numpy, scipy,
+    # py_vollib) land in M1.x when scoring functions need them.
+    "pydantic>=2.7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+# Inherit from root pyproject.toml (line-length, target-version, lint rules).
+# Block exists so `uv run ruff check .` from packages/engine/ uses consistent
+# settings even when invoked from this directory.
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+ignore_missing_imports = true
+plugins = []
+
+# Tests can be slightly looser (Hypothesis decorators are heavy on Any).
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true

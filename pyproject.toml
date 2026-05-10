@@ -10,9 +10,9 @@ requires-python = ">=3.14"
 [tool.uv.workspace]
 # apps/jobs is consolidated into apps/api/app/jobs/ for Phase 1 (per v1.2 §22.7).
 # It re-enters the workspace in Phase 2 when scheduled ingestion lands.
-# packages/engine is added as a workspace member in M0.6 once it has a pyproject.toml.
 members = [
     "apps/api",
+    "packages/engine",
 ]
 
 [tool.ruff]

@@ -11,7 +11,11 @@ This document mirrors plan v1.2 §5 (System Architecture). Read the plan in the 
 +-----------------------------------------------------------+
 |  /engine/* Decision API  |  /data/* Data API (drill-down) |
 +-----------------------------------------------------------+
-|  CORE ENGINES  (the product, packages/engine, M0.6+)      |
+|  CORE ENGINES  (the product, packages/engine)             |
+|   * Type vocabulary         shipped M0.6                  |
+|     - Regime + REGIME_COLORS (6 locked, ADR-0002)         |
+|     - UserStrategyProfile (frozen, ADR-0005)              |
+|     - OptionContract / ChainSnapshot                      |
 |   1. Market State Engine    -> regime + scoring vector    |
 |   2. Flow Score Engine      -> directional bias           |
 |   3. Strike Selector        -> ranked candidates          |
@@ -37,8 +41,8 @@ This document mirrors plan v1.2 §5 (System Architecture). Read the plan in the 
 | `apps/web` | Next.js 16.2.6 (App Router), TypeScript, Tailwind v3, shadcn/ui, Radix | Today screen + Settings + Outcomes; drill-downs (P2+) |
 | `apps/api` | FastAPI, Pydantic v2, SQLAlchemy 2 async, Alembic | REST API, RFC 7807 error envelope, JWT auth (M1.x+) |
 | `apps/jobs` | Python (Arq) | Scheduled ingestion (P2+); consolidated into `apps/api/app/jobs/` for P1 per v1.2 §22.7 |
-| `packages/engine` | Pure Python (numpy, scipy, py_vollib in M0.6+) | The product. Pure functions. No I/O. |
-| `packages/shared-types` | TypeScript generated from Pydantic (M0.6+ via datamodel-code-generator) | Type safety end-to-end |
+| `packages/engine` | Pure Python (Pydantic v2 in M0.6; numpy, scipy, py_vollib in M1+) | The product. Pure functions. No I/O. |
+| `packages/shared-types` | TypeScript generated from Pydantic via custom `scripts/generate.py` (deterministic, drift-checked in CI) | Type safety end-to-end |
 | Postgres 16 | Managed (Neon planned) or local Docker | Source of truth |
 | Redis | Optional, Phase 2+ | Engine cache (5-min TTL on `/engine/daily-plan`) |
 

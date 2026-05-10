@@ -15,8 +15,8 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 | ✅ | M0.3 — FastAPI shell, `/health` `/healthz` `/version`, JWT scaffolding, auth stubs | [#3](https://github.com/csupenn/option-mgmt-2026/pull/3) |
 | ✅ | M0.4 — Next.js 16.2.6 shell, Disclaimer gate, Tailwind, Vitest | [#4](https://github.com/csupenn/option-mgmt-2026/pull/4) |
 | ✅ | docs foundation + 6 ADRs (engineering principles + architecture + SSOT map) | [#5](https://github.com/csupenn/option-mgmt-2026/pull/5) |
-| 🟡 | M0.5 — CI pipelines + pre-commit + Dependabot + policy guards | [#6](https://github.com/csupenn/option-mgmt-2026/pull/6) (open) |
-| ⬜ | M0.6 — Engine types: regimes, profiles, ChainSnapshot, TS type generation | — |
+| ✅ | M0.5 — CI pipelines + pre-commit + Dependabot + policy guards | [#6](https://github.com/csupenn/option-mgmt-2026/pull/6) |
+| 🟡 | M0.6 — Engine types: regimes, profiles, ChainSnapshot, TS type generation | [#17](https://github.com/csupenn/option-mgmt-2026/pull/17) (open) |
 | ⬜ | M0.7 — End-to-end smoke test | — |
 
 **Phase 1 (engine MVP)** starts after M0.7. See the v1.2 plan for the full 5-phase roadmap; section §22 is the canonical correction sheet.
@@ -55,8 +55,16 @@ apps/
   api/              # FastAPI — engine endpoints                        [shipped M0.3]
   jobs/             # (Phase 2) scheduled ingestion — consolidated into apps/api/app/jobs/ in P1
 packages/
-  engine/           # Python — the product (pure functions, no I/O)     [M0.6+]
-  shared-types/     # TS types generated from Pydantic                  [M0.6]
+  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6]
+    engine/
+      regimes.py    # 6 locked regimes (per ADR-0002)                   [M0.6]
+      profiles.py   # UserStrategyProfile (frozen Pydantic)             [M0.6]
+      types.py      # OptionContract + ChainSnapshot                    [M0.6]
+      version.py    # __version__ — bumped per ADR-0005 / §22.15 L2     [M0.6]
+  shared-types/     # TS types generated from Pydantic                  [shipped M0.6]
+    src/            # generated regimes.ts / profiles.ts / types.ts
+    scripts/
+      generate.py   # the codegen — single source of truth bridge
 seeds/csv/          # local-dev seed data per §21 of the plan           [M1.x]
 docs/               # principles, architecture, ADRs, SSOT map          [shipped]
 scripts/            # dev tooling + CI guards                            [shipped M0.4–M0.5]
@@ -111,9 +119,20 @@ Every PR runs through GitHub Actions (`.github/workflows/ci.yml`):
 
 - **guards** — `check_next_version.sh`, `check_no_broker_imports.sh`, `check_engine_version_bump.sh`
 - **api** — ruff + mypy --strict + pytest
-- **web** — eslint + tsc + vitest + next build
+- **engine** — ruff + mypy --strict + pytest + shared-types codegen drift check
+- **web** — eslint + tsc + vitest + next build (apps/web), tsc (packages/shared-types)
 
 Locally, `pre-commit install` wires the same guards as git hooks.
+
+After editing any engine type (`packages/engine/engine/{regimes,profiles,types,version}.py`):
+
+```bash
+cd packages/engine
+uv run python ../shared-types/scripts/generate.py
+git add packages/shared-types/src
+```
+
+CI's drift check fails any commit that updates the Python without regenerating the TS.
 
 ## Conventions
 
