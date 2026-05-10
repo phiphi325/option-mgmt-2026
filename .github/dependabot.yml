@@ -36,27 +36,19 @@ updates:
     # plan v1.2 §22.1). Bumping next or eslint-config-next requires manually
     # updating both package.json and the script. Don't auto-PR them.
     #
-    # Major-version bumps on the listed packages are deferred to Phase 1's
-    # deliberate dep-update sweep (per v1.2 §17, post-M0.7). Each is a
-    # breaking migration: vitest 2→4 changes config + reporter API; typescript
-    # 5→6 affects strict-mode behavior; tailwindcss 3→4 is a full engine
-    # rewrite; @vitejs/plugin-react 4→6 changes the Fast Refresh boundary;
-    # @types/node major bumps should pair with the runtime Node bump in
-    # apps/web/Dockerfile. Minor + patch updates remain auto-PR'd. Reopen
-    # the relevant ignore line if a security advisory warrants emergency
-    # action on a deferred package.
+    # ALL major-version bumps on the npm ecosystem are deferred to Phase 1's
+    # deliberate dep-update sweep (per v1.2 §17, post-M0.7). Every major
+    # bump is a breaking migration that deserves its own focused PR with
+    # tests + visual regression checking, not a Dependabot auto-merge.
+    # Examples already encountered: vitest 2→4 (reporter API), typescript
+    # 5→6 (strict-mode), tailwindcss 3→4 (engine rewrite), tailwind-merge
+    # 2→3, eslint 9→10, jsdom 25→29, @vitejs/plugin-react 4→6, @types/node
+    # 22→25 (should pair with runtime Node bump). Minor + patch updates
+    # remain auto-PR'd. Drop the wildcard rule when Phase 1 begins.
     ignore:
       - dependency-name: 'next'
       - dependency-name: 'eslint-config-next'
-      - dependency-name: 'vitest'
-        update-types: ['version-update:semver-major']
-      - dependency-name: 'typescript'
-        update-types: ['version-update:semver-major']
-      - dependency-name: 'tailwindcss'
-        update-types: ['version-update:semver-major']
-      - dependency-name: '@vitejs/plugin-react'
-        update-types: ['version-update:semver-major']
-      - dependency-name: '@types/node'
+      - dependency-name: '*'
         update-types: ['version-update:semver-major']
 
   # ---- GitHub Actions (.github/workflows) ------------------------------
