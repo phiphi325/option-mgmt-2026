@@ -13,4 +13,4 @@ change under packages/engine/engine/.
 
 from __future__ import annotations
 
-__version__: str = "0.2.0"
+__version__: str = "0.3.0"
