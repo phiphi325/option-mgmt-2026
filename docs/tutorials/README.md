@@ -13,6 +13,7 @@ examples a course instructor would want to assign as reading.
 | Tutorial | Audience | Reading time |
 |---|---|---|
 | [market-state-engine.md](./market-state-engine.md) | 1st-year MFE, quant developers, options traders | ~75 min careful read · ~25 min skim |
+| [scoring-primitives.md](./scoring-primitives.md) | Same audience; read after `market-state-engine.md` (depends on §2 input vocabulary) | ~50 min careful read · ~20 min skim |
 
 ## How tutorials relate to the rest of the docs
 
