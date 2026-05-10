@@ -1,0 +1,68 @@
+# Dependabot config.
+# Per docs/engineering-principles.md (Simplicity — no unjustified deps),
+# Dependabot keeps deps current. Reviewers must still apply the "no new dep
+# without justification" rule when accepting Dependabot PRs that introduce
+# transitive surface.
+
+version: 2
+
+updates:
+  # ---- Python (apps/api) -----------------------------------------------
+  - package-ecosystem: 'pip'
+    directory: '/apps/api'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
+    labels:
+      - 'deps'
+      - 'python'
+    commit-message:
+      prefix: 'chore(deps)'
+      include: 'scope'
+
+  # ---- Node (apps/web) -------------------------------------------------
+  - package-ecosystem: 'npm'
+    directory: '/apps/web'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
+    labels:
+      - 'deps'
+      - 'javascript'
+    commit-message:
+      prefix: 'chore(deps)'
+      include: 'scope'
+    # The Next.js pin is enforced by scripts/check_next_version.sh (per
+    # plan v1.2 §22.1). Bumping next or eslint-config-next requires manually
+    # updating both package.json and the script. Don't auto-PR them.
+    ignore:
+      - dependency-name: 'next'
+      - dependency-name: 'eslint-config-next'
+
+  # ---- GitHub Actions (.github/workflows) ------------------------------
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    labels:
+      - 'deps'
+      - 'ci'
+    commit-message:
+      prefix: 'chore(ci)'
+
+  # ---- Docker base images ---------------------------------------------
+  - package-ecosystem: 'docker'
+    directory: '/apps/api'
+    schedule:
+      interval: 'weekly'
+    labels:
+      - 'deps'
+      - 'docker'
+
+  - package-ecosystem: 'docker'
+    directory: '/apps/web'
+    schedule:
+      interval: 'weekly'
+    labels:
+      - 'deps'
+      - 'docker'

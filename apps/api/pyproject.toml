@@ -2,7 +2,7 @@
 name = "option-mgmt-api"
 version = "0.0.1"
 description = "MSFT Option Risk Management Engine — FastAPI service"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -28,3 +28,32 @@ dev = [
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+
+[tool.ruff]
+# Inherit from root pyproject.toml (line-length, target-version, lint rules).
+# This block exists so `uv run ruff check .` from apps/api/ uses consistent settings
+# even when the user invokes ruff from this directory.
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "W"]
+ignore = ["E501"]
+# `tests/` may import from `app/` without explicit `__init__.py` plumbing.
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # late imports for env-var setup before app.main load
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+ignore_missing_imports = true
+plugins = []
+# Allow tests to skip strict typing — testing libraries are heavy on Any.
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true

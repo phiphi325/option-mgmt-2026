@@ -11,8 +11,8 @@ downstream modules (deps.py, routers/health.py) can depend on them.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -45,7 +45,7 @@ def create_access_token(*, subject: str, extra: dict[str, Any] | None = None) ->
     (sub, iat, exp) cannot be overridden via extra.
     """
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload: dict[str, Any] = dict(extra or {})
     payload.update(
         {
@@ -54,13 +54,19 @@ def create_access_token(*, subject: str, extra: dict[str, Any] | None = None) ->
             "exp": int((now + timedelta(seconds=settings.jwt_access_token_ttl_seconds)).timestamp()),
         }
     )
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    # python-jose's jwt.encode is typed as `Any` upstream; cast to keep the
+    # public contract typed without disabling mypy --strict for the module.
+    return cast(str, jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm))
 
 
 def decode_access_token(token: str) -> dict[str, Any] | None:
     """Decode + verify a JWT. Returns None on any failure (expired, invalid, malformed)."""
     settings = get_settings()
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        # Same Any-return situation as encode(); cast for mypy --strict.
+        return cast(
+            "dict[str, Any]",
+            jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]),
+        )
     except JWTError:
         return None

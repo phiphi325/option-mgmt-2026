@@ -1,18 +1,15 @@
 // Flat-config ESLint setup for Next.js 16.2.6.
-// eslint-config-next exposes a flat-config-compatible default export under
-// `eslint-config-next/flat`. Falls back to `next/core-web-vitals` rules.
+//
+// `eslint-config-next` 16.x exports a native flat-config array via its
+// `core-web-vitals` entry point. Spread it directly — no FlatCompat shim.
 
-import next from "eslint-config-next";
+import next from "eslint-config-next/core-web-vitals";
 
-export default [
+const config = [
   ...next,
   {
-    ignores: [".next/**", "node_modules/**", "dist/**", "out/**"],
-  },
-  {
-    files: ["**/*.ts", "**/*.tsx"],
-    rules: {
-      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
-    },
+    ignores: [".next/**", "node_modules/**", "dist/**", "out/**", "coverage/**"],
   },
 ];
+
+export default config;

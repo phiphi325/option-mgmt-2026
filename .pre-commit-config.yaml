@@ -1,0 +1,57 @@
+# Pre-commit hooks.
+# Per docs/engineering-principles.md (Required Workflow): contributors run
+# pre-commit so failed CI checks are caught locally before push. Same checks
+# run in .github/workflows/ci.yml as the source of truth.
+#
+# Install:
+#   pip install pre-commit
+#   pre-commit install
+
+repos:
+  # ---- Standard hygiene ----------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # ---- Ruff (Python lint + format) -----------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # ---- Project-local guards ------------------------------------------
+  # All three scripts are also invoked from CI (see .github/workflows/ci.yml).
+  - repo: local
+    hooks:
+      - id: check-next-version
+        name: Check Next.js pin (per plan v1.2 §22.1)
+        entry: bash scripts/check_next_version.sh
+        language: system
+        files: '^apps/web/package\.json$'
+        pass_filenames: false
+
+      - id: check-no-broker-imports
+        name: Check no broker imports (per ADR-0001, plan v1.2 §15)
+        entry: bash scripts/check_no_broker_imports.sh
+        language: system
+        types_or: [python, ts, tsx, javascript]
+        pass_filenames: false
+
+      - id: check-engine-version-bump
+        name: Check engine_version bump (per ADR-0005, plan v1.2 §22.15 L2)
+        entry: bash scripts/check_engine_version_bump.sh
+        language: system
+        files: '^packages/engine/engine/'
+        pass_filenames: false

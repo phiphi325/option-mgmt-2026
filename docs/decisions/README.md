@@ -12,6 +12,7 @@ Locked decisions for the option-mgmt-2026 codebase. Each ADR is short (1 page) a
 | [0004](./0004-disclaimer-fail-open.md) | Disclaimer gate fails open under storage errors | Accepted | v1.2 §15 |
 | [0005](./0005-engine-pure-function-discipline.md) | `packages/engine` pure-function discipline (no I/O) | Accepted | v1.2 §1 + §5 + §16 |
 | [0006](./0006-rfc-7807-error-envelope.md) | RFC 7807 ProblemDetails as universal API error shape | Accepted | v1.2 §7 |
+| [0007](./0007-python-version-pin.md) | Python 3.14 pinned across api + engine | Accepted | v1.2 §17 M0.5, §22.15 |
 
 ## Adding an ADR
 

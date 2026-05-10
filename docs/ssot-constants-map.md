@@ -56,9 +56,12 @@
 
 | Pin | Canonical file | Verifier |
 |---|---|---|
-| `next` version | `apps/web/package.json` `"next"` | `scripts/check_next_version.sh` (CI + pre-commit) |
+| `next` version (`16.2.6`) | `apps/web/package.json` `"next"` | `scripts/check_next_version.sh` (CI + pre-commit) |
 | `engine_version` bump on engine changes | `packages/engine/engine/version.py` | `scripts/check_engine_version_bump.sh` (M0.5+) |
 | No broker imports | code-wide grep | `scripts/check_no_broker_imports.sh` (M0.5+) |
+| Python (`3.14`) | `apps/api/.python-version` + `pyproject.toml` `requires-python` + `Dockerfile` | manual review (post-M0.7 stretch: `scripts/check_python_version.sh`) — see [ADR-0007](./decisions/0007-python-version-pin.md) |
+| Node (`22.x`) | `apps/web/Dockerfile` `FROM node:22-alpine` | manual review |
+| pnpm (`9.12.0` in Dockerfile, `10.x` in dev) | `apps/web/Dockerfile` `corepack prepare pnpm@9.12.0` | manual review |
 
 ## Cross-language constants
 

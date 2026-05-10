@@ -1,0 +1,130 @@
+# CI pipeline — runs on every PR and on push to main / staging.
+#
+# Per docs/engineering-principles.md (TDD + Observability + Pin discipline)
+# and plan v1.2 §13 (Testing Strategy) / §14 (CI/CD).
+#
+# Job summary:
+#   guards         pin checks (next, engine_version) + no-broker-import check
+#   api            ruff + mypy --strict + pytest (8 tests in M0.5)
+#   web            eslint + tsc + vitest + next build (8 tests in M0.5)
+#
+# Concurrency cancels stale runs on the same branch when new commits land.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [main, staging]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guards:
+    name: Pin & policy guards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need full history so check_engine_version_bump.sh can compare to the merge base.
+          fetch-depth: 0
+
+      - name: Check Next.js pin (per plan v1.2 §22.1)
+        run: bash scripts/check_next_version.sh
+
+      - name: Check no broker imports (per ADR-0001, plan v1.2 §15)
+        run: bash scripts/check_no_broker_imports.sh
+
+      - name: Check engine_version bump (per ADR-0005, plan v1.2 §22.15 L2)
+        run: bash scripts/check_engine_version_bump.sh
+
+  api:
+    name: API (ruff + mypy + pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          # Cache key includes pyproject + uv.lock when present. Once we commit
+          # apps/api/uv.lock (planned post-M0.7), CI builds become bit-reproducible.
+          enable-cache: true
+          cache-dependency-glob: |
+            apps/api/pyproject.toml
+            apps/api/uv.lock
+
+      - name: Install Python deps
+        # uv reads apps/api/.python-version (3.14) and apps/api/pyproject.toml's
+        # requires-python = ">=3.14" to select the interpreter. uv downloads
+        # the toolchain if the runner doesn't have it. Per ADR-0007.
+        run: uv sync --dev
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: mypy --strict
+        run: uv run mypy --strict app
+
+      - name: pytest
+        env:
+          # Settings.jwt_secret has min_length=16; CI must satisfy it.
+          JWT_SECRET: ci-jwt-secret-not-for-production
+          # No live postgres in unit-test job — health endpoint reports 'degraded'.
+          DATABASE_URL: postgresql+psycopg://postgres:dev@localhost:5432/msft_engine_test
+        run: uv run pytest -q
+
+  web:
+    name: Web (eslint + tsc + vitest + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          # Workspace pnpm-lock.yaml lives at the repo root, NOT under apps/web
+          # — a single workspace lockfile covers all apps/ + packages/ members.
+          cache-dependency-path: 'pnpm-lock.yaml'
+
+      - name: Install web deps
+        # --frozen-lockfile fails if pnpm-lock.yaml doesn't match package.json
+        # — exactly what we want in CI: drift detection.
+        run: pnpm install --frozen-lockfile
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: tsc --noEmit
+        run: pnpm typecheck
+
+      - name: Vitest
+        run: pnpm test
+
+      - name: Next build (smoke check)
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: pnpm build

@@ -4,7 +4,7 @@
 # into a venv at /code/.venv. Build cache is mounted on /root/.cache/uv so
 # repeated builds are fast.
 #
-# Stage 2 (runtime): python:3.12-slim + libpq5 (for psycopg) + curl (for the
+# Stage 2 (runtime): python:3.14-slim + libpq5 (for psycopg) + curl (for the
 # Docker HEALTHCHECK). Inherits the venv from the builder stage.
 #
 # Build context: ./apps/api  (set by docker-compose.yml `build: ./apps/api`)
@@ -12,7 +12,7 @@
 # Replaces the M0.1 placeholder Dockerfile.
 
 # ---- builder ----------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS builder
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
@@ -31,7 +31,7 @@ COPY app ./app
 COPY alembic.ini ./
 
 # ---- runtime ----------------------------------------------------------------
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \

@@ -2,21 +2,22 @@
 name = "option-mgmt-2026"
 version = "0.0.1"
 description = "MSFT Option Risk Management Engine — monorepo root"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 
 # This file declares the uv workspace root. It is not a publishable package
 # itself; member packages live under apps/ and packages/.
 
 [tool.uv.workspace]
+# apps/jobs is consolidated into apps/api/app/jobs/ for Phase 1 (per v1.2 §22.7).
+# It re-enters the workspace in Phase 2 when scheduled ingestion lands.
+# packages/engine is added as a workspace member in M0.6 once it has a pyproject.toml.
 members = [
     "apps/api",
-    "apps/jobs",
-    "packages/engine",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "W"]
@@ -27,11 +28,11 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 ignore_missing_imports = true
 plugins = []
 
-[tool.pytest.ini_options]
-testpaths = ["packages/engine/tests", "apps/api/tests", "apps/jobs/tests"]
-addopts = "-q --strict-markers"
+# Note: the root `[tool.pytest.ini_options]` is intentionally absent — pytest is
+# invoked from each member's working directory (e.g. `cd apps/api && pytest`)
+# so each pyproject.toml owns its own testpaths.

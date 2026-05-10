@@ -22,15 +22,22 @@ export function DisclaimerGate({ children }: { children: React.ReactNode }) {
   // null = not yet read from storage (avoids hydration flash); boolean = real value.
   const [accepted, setAccepted] = useState<boolean | null>(null);
 
+  // Read localStorage once after mount. The setState-in-effect pattern is
+  // intentional here: it's how we hydrate client-only state without an SSR
+  // mismatch — the server can't see localStorage, so the initial render
+  // must show null and then reconcile on the client. Per ADR-0004 this is
+  // the documented pattern.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     try {
       setAccepted(localStorage.getItem(STORAGE_KEY) !== null);
     } catch {
       // localStorage may be unavailable (Safari private mode etc.).
-      // Fail open: don't block the app.
+      // Fail open: don't block the app (per ADR-0004).
       setAccepted(true);
     }
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const accept = () => {
     try {

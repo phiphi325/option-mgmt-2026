@@ -18,7 +18,7 @@ export default function TodayError({
     <main className="container mx-auto py-12 max-w-3xl">
       <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6">
         <h2 className="text-lg font-semibold text-destructive">
-          Something went wrong loading today's decision.
+          Something went wrong loading today&apos;s decision.
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
           {error.message || "Unknown error."}

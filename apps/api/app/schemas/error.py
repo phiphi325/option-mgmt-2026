@@ -32,7 +32,7 @@ class ProblemDetails(BaseModel):
     detail: str | None = None
     instance: str | None = None
 
-    def with_extras(self, **extras: Any) -> "ProblemDetails":
+    def with_extras(self, **extras: Any) -> ProblemDetails:
         """Return a copy with additional fields merged in."""
         merged = self.model_dump(exclude_none=True)
         merged.update(extras)

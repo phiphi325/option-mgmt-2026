@@ -6,9 +6,34 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 
 ## Status
 
-**Phase 0 — Foundation. In progress.** M0.1 monorepo scaffold, M0.2 Postgres schema + Alembic, M0.3 FastAPI shell + JWT scaffolding, and M0.4 Next.js 16.2.6 shell + disclaimer gate have all merged. CI pipelines (M0.5), engine types (M0.6), and end-to-end smoke (M0.7) are next.
+**Phase 0 — Foundation. In progress.** Merged on `main`:
 
-Phase 1 (engine MVP) starts after M0.7. See the v1.2 plan for the full 5-phase roadmap; section §22 is the canonical correction sheet.
+| | What | PR |
+|---|---|---|
+| ✅ | M0.1 — pnpm + uv monorepo, Docker Compose, Makefile | [#1](https://github.com/csupenn/option-mgmt-2026/pull/1) |
+| ✅ | M0.2 — Postgres schema + Alembic migration `0001_init` | [#2](https://github.com/csupenn/option-mgmt-2026/pull/2) |
+| ✅ | M0.3 — FastAPI shell, `/health` `/healthz` `/version`, JWT scaffolding, auth stubs | [#3](https://github.com/csupenn/option-mgmt-2026/pull/3) |
+| ✅ | M0.4 — Next.js 16.2.6 shell, Disclaimer gate, Tailwind, Vitest | [#4](https://github.com/csupenn/option-mgmt-2026/pull/4) |
+| ✅ | docs foundation + 6 ADRs (engineering principles + architecture + SSOT map) | [#5](https://github.com/csupenn/option-mgmt-2026/pull/5) |
+| 🟡 | M0.5 — CI pipelines + pre-commit + Dependabot + policy guards | [#6](https://github.com/csupenn/option-mgmt-2026/pull/6) (open) |
+| ⬜ | M0.6 — Engine types: regimes, profiles, ChainSnapshot, TS type generation | — |
+| ⬜ | M0.7 — End-to-end smoke test | — |
+
+**Phase 1 (engine MVP)** starts after M0.7. See the v1.2 plan for the full 5-phase roadmap; section §22 is the canonical correction sheet.
+
+## Stack
+
+| Layer | Pin | Source of truth |
+|---|---|---|
+| Python | **3.14** ([ADR-0007](./docs/decisions/0007-python-version-pin.md)) | `apps/api/.python-version`, `pyproject.toml`, `apps/api/Dockerfile` |
+| Next.js | **16.2.6** ([ADR § plan v1.2 §22.1](./docs/ssot-constants-map.md)) | `apps/web/package.json` + `scripts/check_next_version.sh` |
+| React | `^19.0.0` (paired with Next 16) | `apps/web/package.json` |
+| Node | `22.x` (web runtime) | `apps/web/Dockerfile` |
+| pnpm | `9.12.0` (Docker), `10.x` accepted in dev | `apps/web/Dockerfile` |
+| PostgreSQL | `16-alpine` | `docker-compose.yml` |
+| Tailwind | `^3.4` | `apps/web/package.json` |
+| FastAPI | `>=0.115` | `apps/api/pyproject.toml` |
+| SQLAlchemy | `>=2.0` (async) | `apps/api/pyproject.toml` |
 
 ## Documentation
 
@@ -26,47 +51,69 @@ The full development plan v1.2 lives in the Hyperagent thread `cmokf2twq0gsv06ad
 
 ```
 apps/
-  web/              # Next.js 16.2.6 (App Router) — Today screen        [M0.4+]
-  api/              # FastAPI — engine endpoints                        [M0.3+]
-  jobs/             # (Phase 2) scheduled ingestion                     [P2]
+  web/              # Next.js 16.2.6 (App Router) — Today screen        [shipped M0.4]
+  api/              # FastAPI — engine endpoints                        [shipped M0.3]
+  jobs/             # (Phase 2) scheduled ingestion — consolidated into apps/api/app/jobs/ in P1
 packages/
-  engine/           # Python — the product (pure functions, no I/O)     [M1.x]
+  engine/           # Python — the product (pure functions, no I/O)     [M0.6+]
   shared-types/     # TS types generated from Pydantic                  [M0.6]
 seeds/csv/          # local-dev seed data per §21 of the plan           [M1.x]
-docs/               # architecture, ops, runbooks
-scripts/            # dev tooling
-.github/workflows/  # CI                                                [M0.5]
+docs/               # principles, architecture, ADRs, SSOT map          [shipped]
+scripts/            # dev tooling + CI guards                            [shipped M0.4–M0.5]
+.github/workflows/  # CI                                                [shipped M0.5]
 docker-compose.yml  # Phase 1 simplified (postgres + api + web)
 Makefile            # common dev commands
 pnpm-workspace.yaml # JS/TS workspace
 pyproject.toml      # Python (uv) workspace root
+pnpm-lock.yaml      # workspace pnpm lockfile (root, not per-app)        [shipped M0.5]
 ```
 
 ## Quick start
 
 ```bash
-# After M0.2 (schema lands), bring up postgres for migrations:
-docker compose up -d postgres
-
-# After M0.3 / M0.4 land, full stack:
-docker compose up
-# web:      http://localhost:3000
+# Bring up postgres + api + web:
+docker compose up --build
+# web:      http://localhost:3000   (disclaimer gate, then /today placeholder)
 # api:      http://localhost:8000/api/v1/health
 # postgres: localhost:5432
+
+# Run migrations once (first boot):
+docker compose up -d postgres
+cd apps/api && uv sync --dev && uv run alembic upgrade head
 ```
 
-In M0.1 (this PR), `apps/api` and `apps/web` are scaffolded with placeholder Dockerfiles only; full content arrives in M0.3 (api shell) and M0.4 (web shell).
+Local dev outside Docker:
+
+```bash
+# api
+cd apps/api && uv sync --dev && uv run uvicorn app.main:app --reload
+
+# web
+cd apps/web && pnpm install && pnpm dev
+```
+
+The full Helen-shaped seed lands in M1.x; for now `scripts/seed_local.py` is a stub.
 
 ## Make targets
 
-| Command | Effect | Available |
-|---|---|---|
-| `make dev` | docker compose up | M0.1 |
-| `make test` | pytest + vitest | M0.5+ |
-| `make lint` | ruff + eslint | M0.5+ |
-| `make typecheck` | mypy --strict + tsc --noEmit | M0.5+ |
-| `make migrate` | alembic upgrade head | M0.2+ |
-| `make clean` | down volumes, prune build artifacts | M0.1 |
+| Command | Effect |
+|---|---|
+| `make dev` | `docker compose up` |
+| `make test` | pytest + vitest (post-M0.5) |
+| `make lint` | ruff + eslint (post-M0.5) |
+| `make typecheck` | mypy --strict + tsc --noEmit (post-M0.5) |
+| `make migrate` | alembic upgrade head |
+| `make clean` | down volumes, prune build artifacts |
+
+## CI / local quality gate
+
+Every PR runs through GitHub Actions (`.github/workflows/ci.yml`):
+
+- **guards** — `check_next_version.sh`, `check_no_broker_imports.sh`, `check_engine_version_bump.sh`
+- **api** — ruff + mypy --strict + pytest
+- **web** — eslint + tsc + vitest + next build
+
+Locally, `pre-commit install` wires the same guards as git hooks.
 
 ## Conventions
 
