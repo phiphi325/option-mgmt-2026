@@ -11,6 +11,8 @@ trivial helpers if needed; they don't import from `engine._utils`.
 
 from __future__ import annotations
 
+import math
+
 
 def clip01(x: float) -> float:
     """Clip a float to the closed unit interval [0.0, 1.0].
@@ -25,3 +27,19 @@ def clip01(x: float) -> float:
     if x > 1.0:
         return 1.0
     return x
+
+
+def sigmoid(x: float) -> float:
+    """Standard logistic sigmoid: σ(x) = 1 / (1 + exp(-x)).
+
+    Used by the M1.4 Market State Engine `classify()` to soften threshold-
+    based regime predicates (per plan v1.2 §9.2). Numerically stable for
+    extreme inputs — Python's `math.exp` underflows to 0 for very negative
+    `x` (sigmoid → 0) and overflows are pre-empted by branching on sign so
+    we always pass a non-positive value into `exp`.
+    """
+    if x >= 0.0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)

@@ -11,6 +11,7 @@ M0.6 ships only the type vocabulary. Scoring + decision functions land in M1+.
 
 from __future__ import annotations
 
+from engine.market_state import MarketStateResult, classify
 from engine.profiles import IncomeNeed, RiskTolerance, UserStrategyProfile
 from engine.regimes import REGIME_COLORS, Regime
 from engine.scoring import (
@@ -37,6 +38,7 @@ __all__ = [
     "EventStats",
     "IncomeNeed",
     "IvScoreResult",
+    "MarketStateResult",
     "OiWalls",
     "OptionContract",
     "OptionType",
@@ -45,6 +47,7 @@ __all__ = [
     "StructureScoreResult",
     "UserStrategyProfile",
     "__version__",
+    "classify",
     "event_score",
     "iv_score",
     "structure_score",

@@ -12,6 +12,55 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [0.6.0] — 2026-05-10
+
+### Added (engine — `engine.market_state.classify`)
+
+- **`market_state.classify()`** — full Market State Engine entry point. 18-input signature per plan v1.2 §22.3. Computes per-regime score predicates (per §9.2) for all six regimes, picks the winning regime via max-score-with-priority-tie-break, generates advisory tags, and echoes the input vector for explainability + replay.
+- **`market_state.MarketStateResult`** — frozen dataclass carrying:
+  - Engine output: `regime: Regime`, `regime_score: float ∈ [0, 1]`, `all_scores: dict[Regime, float]`, `tags: tuple[str, ...]`.
+  - Echoed inputs: `spot`, `iv_rank`, `iv_percentile`, `hv_30`, `expected_move_pct`, `max_pain`, `max_pain_delta_pct` (computed), `pcr_volume`, `pcr_oi`, `trend_strength`, `realized_vs_implied`, `breakout_signal`, `oi_concentration_at_max_pain`, `days_to_next_event`, `next_event_kind`, `days_since_event`, `days_to_nearest_opex`, `iv_rank_change_1d`, `gap_pct`.
+- **Per-regime score predicates** (private — `_score_<regime>`):
+  - `HIGH_IV_EVENT`: `0.5 · sigmoid((iv_rank − 0.70) / 0.10) + 0.5 · near_event_flag` (event within 7 days).
+  - `HIGH_IV_PIN`: `0.4 · sigmoid((iv_rank − 0.60) / 0.10) + 0.4 · pin_close + 0.2 · near_expiry` (pin tolerance 1%, opex horizon 5 days).
+  - `LOW_IV_TREND`: `0.5 · sigmoid((0.30 − iv_rank) / 0.10) + 0.5 · trend_strength`.
+  - `LOW_IV_RANGE`: `0.4 · iv_low + 0.3 · (1 − trend_strength) + 0.3 · (1 − |realized_vs_implied − 1|)`.
+  - `BREAKOUT`: `clip01(breakout_signal)` — defers entirely to the §22.5 composite.
+  - `POST_EVENT_REPRICE`: `0.6 · clip01(−iv_rank_change_1d / 0.20) + 0.4 · big_gap_flag` when `days_since_event <= 1`. Note: plan §9.2's sketched `1 − x / -20` is sign-flipped; the corrected formula is documented at the call site.
+- **Tie-break priority** (`_TIE_BREAK_PRIORITY`): when the runner-up's score is within `0.10` of the leader, resolves toward the more conservative regime in this order: `HIGH_IV_EVENT > HIGH_IV_PIN > POST_EVENT_REPRICE > BREAKOUT > LOW_IV_TREND > LOW_IV_RANGE` (per §9.2).
+- **Tag generation** (advisory, consumed by Strike Selector + Recommendation + Confidence Composer):
+  - `sell_vol_favorable` (iv_rank ≥ 0.70), `sell_vol_unfavorable` (iv_rank ≤ 0.30)
+  - `event_in_<N>d` when `days_to_next_event ≤ 14`
+  - `post_event_window` when `days_since_event ≤ 2`
+  - `pin_risk` when `|spot − max_pain|/spot ≤ 0.005` and `dte_to_nearest_opex ≤ 5`
+  - `breakout_active` (breakout_signal ≥ 0.70)
+  - `trending` (trend_strength ≥ 0.70) / `ranging` (trend_strength ≤ 0.30)
+  - `concentrated_oi_at_pin` (oi_concentration_at_max_pain ≥ 0.60)
+- **`engine._utils.sigmoid()`** — standard logistic helper, numerically stable for extreme inputs (branches on sign so `math.exp` always sees a non-positive argument).
+
+### Scale conventions (documented in classify docstring)
+
+- `iv_rank`, `iv_percentile`, `trend_strength`, `breakout_signal`, `oi_concentration_at_max_pain` all in `[0, 1]` (engine-canonical, matches `engine.market_state.iv.iv_rank`).
+- `iv_rank_change_1d` in `[-1, 1]` (delta of `iv_rank`); a 20pp IV crush = `-0.20`.
+- `gap_pct` is signed fraction of spot (`0.025 = 2.5%`).
+- `expected_move_pct` is fraction of spot.
+- `spot`, `max_pain` are floats in dollars (matches `engine.market_state.compute_max_pain` and `OptionContract.strike`); plan §22.3's `Decimal` is aspirational.
+
+### Changed
+
+- `engine.__init__` re-exports `classify` and `MarketStateResult`.
+- `engine.market_state.__init__` re-exports `classify` and `MarketStateResult` (M1.4 section in the module docstring).
+- 65 new tests (180 → 245 total in `packages/engine/tests/`). 24 regime fixtures (4 per regime, plan §17 acceptance), 12 tag tests, tie-break behaviour tests, echoed-input tests, parametrized validation tests, Hypothesis property test asserting `regime_score == all_scores[regime]` and all values in `[0, 1]`.
+- `engine.market_state.classify`: 99% line coverage; the 2 uncovered lines are a defensive fallback in `_select_regime` that's unreachable when `_TIE_BREAK_PRIORITY` covers all six regimes (left in for safety against future regressions).
+
+### Plan refs
+
+v1.2 §22.3 (extended 18-input signature), §9.2 (per-regime predicate sketches with the §22-noted scale + sign-error corrections), §17 M1.4 (size L, 24 regime fixtures), §22.5 (`clip01` reuse), §22.13 (`MarketStateResult` echoed inputs power Confidence Composer breakdowns).
+
+PR: [#29](https://github.com/csupenn/option-mgmt-2026/pull/29)
+
+---
+
 ## [0.5.0] — 2026-05-10
 
 ### Added (engine — `engine.scoring`)
