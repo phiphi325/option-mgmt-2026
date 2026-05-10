@@ -6,7 +6,9 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 
 ## Status
 
-**Phase 0 — Foundation. In progress.** Merged on `main`:
+**Phase 1 — Engine MVP. In progress.** Engine `0.4.0`, 121 tests on `main`. See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-transitions/`](./docs/thread-transitions/) for thread-by-thread handoff records.
+
+### Phase 0 — Foundation ✅ (all 7 milestones merged)
 
 | | What | PR |
 |---|---|---|
@@ -17,9 +19,21 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 | ✅ | docs foundation + 6 ADRs (engineering principles + architecture + SSOT map) | [#5](https://github.com/csupenn/option-mgmt-2026/pull/5) |
 | ✅ | M0.5 — CI pipelines + pre-commit + Dependabot + policy guards | [#6](https://github.com/csupenn/option-mgmt-2026/pull/6) |
 | ✅ | M0.6 — Engine types: regimes, profiles, ChainSnapshot, TS type generation | [#17](https://github.com/csupenn/option-mgmt-2026/pull/17) |
-| 🟡 | M0.7 — End-to-end smoke test | [#22](https://github.com/csupenn/option-mgmt-2026/pull/22) (open) |
+| ✅ | M0.7 — End-to-end smoke test | [#22](https://github.com/csupenn/option-mgmt-2026/pull/22) |
 
-**Phase 1 (engine MVP)** starts after M0.7. See the v1.2 plan for the full 5-phase roadmap; section §22 is the canonical correction sheet.
+### Phase 1 — Engine MVP (in progress)
+
+| | What | PR | Engine |
+|---|---|---|---|
+| ✅ | docs — enhancement-spec adoption roadmap (ADR-0008): 6 adopt, 2 defer, 0 reject | [#23](https://github.com/csupenn/option-mgmt-2026/pull/23) | — |
+| ✅ | M1.1 — IV rank/percentile + HV (close-to-close + Parkinson) + 252-day seed | [#24](https://github.com/csupenn/option-mgmt-2026/pull/24) | `0.2.0` |
+| ✅ | M1.2 — max pain + expected move + put/call ratios | [#25](https://github.com/csupenn/option-mgmt-2026/pull/25) | `0.3.0` |
+| ✅ | M1.3 — Wilder ADX trend strength + 4-component breakout signal + `clip01` helper | [#26](https://github.com/csupenn/option-mgmt-2026/pull/26) | `0.4.0` |
+| ⏭️ | M1.4 — Market State Engine `classify()` + 24 regime fixtures | — | `0.5.0` |
+| | M1.5 — Flow Score Engine + OI walls + dealer-gamma proxy | — | — |
+| | M1.6–M1.25 — Strike Selector, Recommendation, Decision, Confidence Composer, Execution Feasibility, `/engine/*` APIs, Today screen | — | — |
+
+See plan v1.2 §17 for the full milestone table; §22 is the canonical correction sheet (audit-resolved 2026-05-09).
 
 ## Stack
 
@@ -44,6 +58,9 @@ Read [`docs/`](./docs/) before any code change:
 - [`docs/ssot-constants-map.md`](./docs/ssot-constants-map.md) — canonical home for every shared constant.
 - [`docs/disclaimers.md`](./docs/disclaimers.md) — full educational-use disclaimer text.
 - [`docs/decisions/`](./docs/decisions/) — ADRs (engine-first, regime taxonomy, confidence composer, ...).
+- [`docs/enhancements/`](./docs/enhancements/) — third-party enhancement specs + per-spec assessments. Adoption decisions live in ADRs.
+- [`docs/thread-transitions/`](./docs/thread-transitions/) — per-AI-thread handoff records. One file per thread, capturing what shipped + decisions + handoff brief.
+- [`CHANGELOG.md`](./CHANGELOG.md) — per-engine-version changelog (Keep a Changelog format).
 
 The full development plan v1.2 lives in the Hyperagent thread `cmokf2twq0gsv06adlij0glqs`.
 
@@ -55,25 +72,35 @@ apps/
   api/              # FastAPI — engine endpoints                        [shipped M0.3]
   jobs/             # (Phase 2) scheduled ingestion — consolidated into apps/api/app/jobs/ in P1
 packages/
-  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6]
+  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6, growing]
     engine/
-      regimes.py    # 6 locked regimes (per ADR-0002)                   [M0.6]
-      profiles.py   # UserStrategyProfile (frozen Pydantic)             [M0.6]
-      types.py      # OptionContract + ChainSnapshot                    [M0.6]
-      version.py    # __version__ — bumped per ADR-0005 / §22.15 L2     [M0.6]
+      _utils.py             # clip01() — engine-wide [0,1] saturation   [M1.3]
+      regimes.py            # 6 locked regimes (per ADR-0002)           [M0.6]
+      profiles.py           # UserStrategyProfile (frozen Pydantic)     [M0.6]
+      types.py              # OptionContract + ChainSnapshot            [M0.6]
+      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 0.4.0]
+      market_state/
+        iv.py               # IV rank + IV percentile                   [M1.1]
+        hv.py               # close-to-close + Parkinson HV             [M1.1]
+        expected_move.py    # ATM straddle + forward-IV expected move   [M1.2]
+        max_pain.py         # CBOE-style total-OI loss minimization     [M1.2]
+        pcr.py              # put/call ratios (volume + OI)             [M1.2]
+        trend_strength.py   # Wilder ADX, normalized [0,1]              [M1.3]
+        breakout.py         # 4-component composite breakout signal     [M1.3]
   shared-types/     # TS types generated from Pydantic                  [shipped M0.6]
     src/            # generated regimes.ts / profiles.ts / types.ts
     scripts/
       generate.py   # the codegen — single source of truth bridge
-seeds/csv/          # local-dev seed data per §21 of the plan           [M1.x]
-docs/               # principles, architecture, ADRs, SSOT map          [shipped]
-scripts/            # dev tooling + CI guards + run_smoke.sh (M0.7)      [shipped M0.4–M0.7]
-.github/workflows/  # CI                                                [shipped M0.5]
+seeds/csv/          # local-dev seed data per §21 of the plan           [iv_history M1.1]
+docs/               # principles, architecture, ADRs, SSOT map, transitions
+scripts/            # dev tooling + CI guards + run_smoke.sh             [shipped M0.4–M0.7]
+.github/workflows/  # CI                                                 [shipped M0.5]
 docker-compose.yml  # Phase 1 simplified (postgres + api + web)
 Makefile            # common dev commands
 pnpm-workspace.yaml # JS/TS workspace
 pyproject.toml      # Python (uv) workspace root
 pnpm-lock.yaml      # workspace pnpm lockfile (root, not per-app)        [shipped M0.5]
+CHANGELOG.md        # per-engine-version changelog
 ```
 
 ## Quick start
@@ -98,9 +125,10 @@ cd apps/api && uv sync --dev && uv run uvicorn app.main:app --reload
 
 # web
 cd apps/web && pnpm install && pnpm dev
-```
 
-The full Helen-shaped seed lands in M1.x; for now `scripts/seed_local.py` is a stub.
+# engine (pure-function tests)
+cd packages/engine && uv sync --dev && uv run pytest -q
+```
 
 ## Make targets
 
@@ -108,7 +136,7 @@ The full Helen-shaped seed lands in M1.x; for now `scripts/seed_local.py` is a s
 |---|---|
 | `make dev` | `docker compose up` |
 | `make test` | pytest (api + engine) + vitest (web) |
-| `make smoke` | end-to-end smoke: postgres + alembic + uvicorn + httpx pytest [M0.7+] |
+| `make smoke` | end-to-end smoke: postgres + alembic + uvicorn + httpx pytest |
 | `make lint` | ruff (api + engine) + eslint (web) |
 | `make typecheck` | mypy --strict (api + engine) + tsc --noEmit (web + shared-types) |
 | `make migrate` | alembic upgrade head |
@@ -122,7 +150,7 @@ Every PR runs through GitHub Actions (`.github/workflows/ci.yml`):
 - **api** — ruff + mypy --strict + pytest
 - **engine** — ruff + mypy --strict + pytest + shared-types codegen drift check
 - **web** — eslint + tsc + vitest + next build (apps/web), tsc (packages/shared-types)
-- **smoke** — real Postgres + alembic upgrade + uvicorn + httpx pytest (M0.7+)
+- **smoke** — real Postgres + alembic upgrade + uvicorn + httpx pytest
 
 Locally, `pre-commit install` wires the same guards as git hooks. Run the cross-stack smoke test locally with `make smoke` (requires Docker).
 
@@ -143,6 +171,7 @@ CI's drift check fails any commit that updates the Python without regenerating t
 - **No execution.** This codebase has no broker write paths. CI guard (`scripts/check_no_broker_imports.sh`, M0.5) enforces it.
 - **Deterministic V1 → ML in Phase 4.** ML upgrades replace specific engine nodes without changing interfaces.
 - **Branch + PR workflow.** Every milestone is a branch named `feat/<milestone-id>-<slug>`, merged via squash into `main`. Conventional-commit messages.
+- **Engine version bump on every `packages/engine/engine/` change.** Per [ADR-0005](./docs/decisions/0005-engine-pure-function-discipline.md). CI guard enforces.
 
 ## Disclaimers
 
