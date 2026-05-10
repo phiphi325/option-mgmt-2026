@@ -1,9 +1,9 @@
-# Tutorial: Scoring Primitives (`iv_score`, `structure_score`, `event_score`)
+# Tutorial: Scoring Primitives (`iv_score`, `structure_score`, `event_score`, `gamma_score`)
 
 > **Audience.** First-year master's students in financial engineering; quant-developer onboarding; anyone consuming the scoring primitives downstream.
 > **Prerequisites.** Read the [Market State Engine tutorial](./market-state-engine.md) first (or at least skim §2 on the input vocabulary — IV, HV, IV rank, max pain, expected move, OI walls). Comfort with Black–Scholes basics, `clip` operations, weighted means.
-> **Reading time.** ~50 min careful read with the exercises; ~20 min skim.
-> **Engine version covered.** `0.5.0` (post-M1.4a) onward; the primitives live in [`packages/engine/engine/scoring/`](../../packages/engine/engine/scoring) and have not changed since.
+> **Reading time.** ~60 min careful read with the exercises; ~25 min skim.
+> **Engine version covered.** `0.5.0` (M1.4a iv/structure/event) and `0.8.0` (M1.5a `gamma_score`) onward. The primitives live in [`packages/engine/engine/scoring/`](../../packages/engine/engine/scoring).
 >
 > **Disclaimer.** This tutorial is **educational material**. The scoring primitives are decision-support components, not investment advice. See [`docs/disclaimers.md`](../disclaimers.md).
 
@@ -16,11 +16,12 @@
 3. [`iv_score()` — IV-favorability](#3-iv_score--iv-favorability)
 4. [`structure_score()` — options-structure signal](#4-structure_score--options-structure-signal)
 5. [`event_score()` — event-uncertainty signal](#5-event_score--event-uncertainty-signal)
-6. [Design philosophy & test discipline](#6-design-philosophy--test-discipline)
-7. [End-to-end worked example](#7-end-to-end-worked-example)
-8. [Hands-on exercises](#8-hands-on-exercises)
-9. [Further reading](#9-further-reading)
-10. [Glossary of symbols](#10-glossary-of-symbols)
+6. [`gamma_score()` — dealer-gamma exposure](#6-gamma_score--dealer-gamma-exposure)
+7. [Design philosophy & test discipline](#7-design-philosophy--test-discipline)
+8. [End-to-end worked example](#8-end-to-end-worked-example)
+9. [Hands-on exercises](#9-hands-on-exercises)
+10. [Further reading](#10-further-reading)
+11. [Glossary of symbols](#11-glossary-of-symbols)
 
 ---
 
@@ -49,18 +50,21 @@ raw inputs into scalars and small dataclasses.
 - "How attractive is selling premium right now?" → `iv_score()`
 - "How constrained is the underlying by options structure?" → `structure_score()`
 - "How much event-driven uncertainty sits in the chain?" → `event_score()`
+- "How much are dealers amplifying or dampening spot moves?" → `gamma_score()`
 
 Each scoring function returns a frozen `*ScoreResult` dataclass that carries a
 headline `score ∈ [0, 1]` plus a per-component `breakdown: dict[str, float]`.
 The headline lets downstream engines do fast comparisons; the breakdown lets
-them — and the UI — explain *why* the score is what it is.
+them — and the UI — explain *why* the score is what it is. `gamma_score` adds
+one extra field — `sign ∈ {−1, 0, +1}` — because gamma exposure is naturally
+directional (amplifier vs dampener); see §6 for the full story.
 
 ### 1.2 The §9.11 wiring matrix
 
 The plan v1.2 §9.11 wiring matrix spells out which engine consumes which
-scoring function. M1.4a ships the three that surround `iv` / `structure` /
-`event`; M1.5a adds `gamma`; the existing Flow Score Engine is the
-orchestrator that composes them:
+scoring function. M1.4a shipped iv / structure / event; M1.5a adds gamma;
+all four are now on `main`. The Flow Score Engine (M1.5b, planned) will be
+the orchestrator that composes them:
 
 | Consumer | iv | structure | gamma | event | flow |
 |---|:---:|:---:|:---:|:---:|:---:|
@@ -71,10 +75,10 @@ orchestrator that composes them:
 | Collar Builder | ✓ |   |   | ✓ |   |
 | Strike Selector | ✓ |   |   |   |   |
 
-The matrix tells you immediately why these three were the M1.4a deliverable:
-they are the inputs the Market State Engine (M1.4) and Collar Builder (M1.11a)
-need before they can compute anything useful, and they are *consumed* by the
-Confidence Composer for explainability.
+The matrix tells you immediately why iv/structure/event were the M1.4a
+deliverable: they're what the Market State Engine (M1.4) and Collar Builder
+(M1.11a) need first. M1.5a's `gamma_score` plugs into the Flow Score Engine
+orchestrator that lands next (M1.5b).
 
 ### 1.3 Design objectives
 
@@ -572,9 +576,178 @@ And 15 days out instead of 0:
 
 ---
 
-## 6. Design philosophy & test discipline
+## 6. `gamma_score()` — dealer-gamma exposure
 
-### 6.1 Why composite scores with breakdowns?
+### 6.1 What it measures
+
+`gamma_score()` answers: **"How much is the options-dealer community
+amplifying or dampening spot's near-term path?"** Unlike the previous three
+primitives, the answer is naturally *signed*: the same magnitude can mean
+**amplifier** (dealers must chase spot to delta-hedge) or **dampener**
+(dealers naturally mean-revert spot through their hedge book).
+
+The intuition comes from the dealer-hedge book:
+
+- When the dealer is **net long gamma**, every spot move *toward* their
+  position increases their delta, so they hedge by **selling rallies and
+  buying dips** — that mean-reverts spot. → vol *dampener*.
+- When the dealer is **net short gamma**, every spot move *away* from
+  their position increases their delta, so they hedge by **buying rallies
+  and selling dips** — that amplifies spot. → vol *amplifier*.
+
+Two inputs feed the score:
+
+  proxy_magnitude  Magnitude of the dealer-gamma proxy from
+                   `engine.flow_score.compute_dealer_gamma_proxy()` (M1.5),
+                   normalized to `[0, 1]` by a spot-scaled calibration.
+  walls_magnitude  Average absolute gamma exposure across the supplied
+                   `GammaWall` set. V1 callers pass `[]` (no GEX module
+                   yet) and the walls component is 0.
+
+### 6.2 Inputs
+
+```python
+def gamma_score(
+    *,
+    dealer_gamma_proxy: float,    # signed; from compute_dealer_gamma_proxy()
+    spot: float,                  # > 0
+    gamma_walls: list[GammaWall], # [] in V1; populated by Phase 1.5 E1 GEX
+) -> GammaScoreResult: ...
+```
+
+The `GammaWall` input type (`engine.scoring.GammaWall`) is defined
+alongside `gamma_score` because the producer (Phase 1.5 E1 GEX module per
+[ADR-0008](../decisions/0008-enhancement-adoption-roadmap.md)) doesn't
+exist yet. V1 callers pass `gamma_walls=[]` and the function degrades
+gracefully — the score is then purely the proxy magnitude.
+
+```python
+@dataclass(frozen=True)
+class GammaWall:
+    strike: float
+    gamma_exposure: float    # signed; only |·| contributes to walls_magnitude
+```
+
+### 6.3 Formula
+
+```python
+_W_PROXY = 0.7
+_W_WALLS = 0.3
+_PROXY_NORMALIZATION_SCALE = 10_000.0
+```
+
+Let $\Pi$ denote the dealer-gamma proxy (signed), $S$ the spot, and
+$\mathcal{W}$ the (possibly empty) set of `GammaWall` records. Define
+the normalizer $D = S \cdot 10{,}000$.
+
+$$\text{proxy\_magnitude} = \mathrm{clip}_{[0,1]}\!\left( \frac{|\Pi|}{D} \right).$$
+
+When $\mathcal{W} = \varnothing$, **no weight redistribution**:
+
+$$\text{walls\_magnitude} = 0, \qquad \text{score} = \text{proxy\_magnitude}.$$
+
+When $\mathcal{W} \neq \varnothing$, weight-blend with the magnitude
+average of wall exposures:
+
+$$\text{walls\_magnitude} = \mathrm{clip}_{[0,1]}\!\left( \frac{1}{|\mathcal{W}|} \sum_{w \in \mathcal{W}} \frac{|w.\text{gamma\_exposure}|}{D} \right),$$
+$$\text{score} = \mathrm{clip}_{[0,1]}\!\big( 0.7 \cdot \text{proxy\_magnitude} + 0.3 \cdot \text{walls\_magnitude} \big).$$
+
+And the **sign** field, separately:
+
+$$\text{sign} = \begin{cases} +1 & \Pi > 0 \quad \text{(dampener)} \\ 0 & \Pi = 0 \\ -1 & \Pi < 0 \quad \text{(amplifier)} \end{cases}$$
+
+### 6.4 Why the score / sign split?
+
+Plan §9.11 specifies "0..1 magnitude + sign in result; positive=stabilizing,
+negative=amplifying." The result type honors this split exactly:
+
+```python
+@dataclass(frozen=True)
+class GammaScoreResult:
+    score: float           # [0, 1]; magnitude
+    sign: int              # +1, 0, -1; direction
+    breakdown: dict[str, float]
+```
+
+Two downstream consumption patterns:
+
+- **Magnitude consumers** (e.g. Confidence Composer's `signal_alignment`)
+  read `score` alone — they care "how strong is the gamma signal?" without
+  needing to know the direction, because direction is captured elsewhere
+  (the regime, the recommendation rule).
+- **Direction-aware consumers** (e.g. Flow Score Engine's `gamma_risk`
+  and `gamma_context` fields per §22.2, recommendation rules per
+  [§22.8](../../packages/engine/config/rules.yaml)) read both. A
+  high-magnitude amplifier (sign=−1) calls for *protective* action; a
+  high-magnitude dampener (sign=+1) calls for *premium-selling* action.
+
+Keeping the two pieces separate avoids the trap of encoding sign into the
+score itself (e.g. via $\text{score} \in [-1, +1]$) — that would make
+the Confidence Composer's positive_weights math (per §22.13) lose
+information, because $|-0.8| = 0.8 = |+0.8|$ map to the same composer
+weight.
+
+### 6.5 Edge cases
+
+| Input | Output |
+|---|---|
+| `spot <= 0` | `ValueError` |
+| `dealer_gamma_proxy = 0`, `gamma_walls = []` | `score = 0`, `sign = 0` |
+| `dealer_gamma_proxy = 0`, `gamma_walls = [GammaWall(...)]` | `score > 0` from walls; `sign = 0` |
+| `gamma_walls = []` | `walls_magnitude = 0`; `score = proxy_magnitude` (no redistribution) |
+| Very large `|dealer_gamma_proxy|` | `proxy_magnitude` clips at 1.0 |
+| `GammaWall.gamma_exposure < 0` | Contributes via `|·|`; direction info lost (intentional — sign comes from `dealer_gamma_proxy`) |
+
+### 6.6 V1 calibration caveat
+
+The constant `_PROXY_NORMALIZATION_SCALE = 10_000.0` was chosen so a
+typical MSFT-style chain with non-trivial dealer gamma maps the proxy
+magnitude into the upper half of `[0, 1]`. For example, $\Pi = -200{,}000$
+at $S = 100$ gives $\text{proxy\_magnitude} = 200{,}000 / (100 \cdot 10{,}000) = 0.2$.
+
+This is a heuristic. The Phase 1.5 E1 GEX module replaces both the
+proxy itself and this normalization constant with proper signed-gamma
+calculations grounded in BS γ (per [ADR-0008](../decisions/0008-enhancement-adoption-roadmap.md)).
+Until then, `gamma_score` is most useful as a **relative** signal across
+days for the same ticker — absolute magnitudes across tickers are not
+directly comparable.
+
+### 6.7 Worked example
+
+```python
+from engine.scoring import gamma_score, GammaWall
+
+result = gamma_score(
+    dealer_gamma_proxy=-500_000.0,        # net short gamma
+    spot=100.0,
+    gamma_walls=[GammaWall(strike=105.0, gamma_exposure=-300_000.0)],
+)
+```
+
+By hand:
+
+- $D = 100 \cdot 10{,}000 = 1{,}000{,}000$.
+- $\text{proxy\_magnitude} = |-500{,}000| / 1{,}000{,}000 = 0.5$.
+- Average $|w.\text{gamma\_exposure}|$ = $300{,}000$ (one wall).
+- $\text{walls\_magnitude} = 300{,}000 / 1{,}000{,}000 = 0.3$.
+- $\text{score} = 0.7 \cdot 0.5 + 0.3 \cdot 0.3 = 0.35 + 0.09 = 0.44$.
+- $\Pi < 0$ → $\text{sign} = -1$.
+
+`result.score == 0.44`, `result.sign == -1`,
+`result.breakdown == {"proxy_magnitude": 0.5, "walls_magnitude": 0.3}`.
+This matches `test_gamma_score_with_walls_blends_components` in
+[`packages/engine/tests/test_scoring_gamma.py`](../../packages/engine/tests/test_scoring_gamma.py).
+
+### 6.8 Code reference
+
+[`packages/engine/engine/scoring/gamma.py`](../../packages/engine/engine/scoring/gamma.py).
+The producer of `dealer_gamma_proxy` is [`engine.flow_score.compute_dealer_gamma_proxy`](../../packages/engine/engine/flow_score/dealer_gamma.py) (M1.5).
+
+---
+
+## 7. Design philosophy & test discipline
+
+### 7.1 Why composite scores with breakdowns?
 
 Three alternatives were considered and rejected:
 
@@ -593,7 +766,7 @@ The composite-score-plus-breakdown pattern:
 - **UI-readiness** — the Confidence Composer renders each breakdown
   component as a stacked-bar segment.
 
-### 6.2 Weight conventions
+### 7.2 Weight conventions
 
 In every primitive, **the per-component weights sum to 1.0**. This gives
 two guarantees:
@@ -604,7 +777,7 @@ two guarantees:
    in `iv_score` means rank explains 40% of the composite when all
    components are equal.
 
-### 6.3 Constants at the top of the module
+### 7.3 Constants at the top of the module
 
 Every threshold and weight lives at the top of its module with a comment
 naming the plan reference. The pattern:
@@ -630,7 +803,7 @@ Three benefits:
 - The constants are easy to grep when ADR-0008's Phase 4 ML upgrade
   starts shipping learned weights.
 
-### 6.4 Test discipline: 100% line coverage
+### 7.4 Test discipline: 100% line coverage
 
 Plan v1.2 §9.11 mandates **100% line coverage** on
 `packages/engine/engine/scoring/`. The CI step `Coverage check (engine.scoring 100%)`
@@ -649,7 +822,7 @@ Why 100% specifically for `scoring/`?
   least one of them. A bug here cascades.
 - The functions are *small enough* that 100% is genuinely reachable.
   `iv_score()` is ~30 lines, `structure_score()` is ~50 lines,
-  `event_score()` is ~40 lines.
+  `event_score()` is ~40 lines, `gamma_score()` is ~30 lines.
 - A 100% gate is **falsifiable** — much harder to negotiate down than a
   "high coverage please" social norm.
 
@@ -662,24 +835,29 @@ function has:
   monotonicity in inputs where the function is monotonic (e.g. `iv_score`
   is non-decreasing in `iv_rank`, `iv_percentile`, and `atm_iv_30d`).
 
-180 → 245 engine tests after M1.4a + M1.4 land (the scoring tests
-contribute 59 of those).
+M1.4a + M1.4 + M1.5 + M1.5a contribute 59 + 65 + 34 + 15 = 173 of the
+engine test suite's tests. `gamma_score` alone has 15 tests — 10 named
+hand-computed references, 2 validation tests, and 3 Hypothesis property
+tests asserting `score ∈ [0, 1]`, sign symmetry under proxy negation, and
+sign matching the proxy's sign.
 
 ---
 
-## 7. End-to-end worked example
+## 8. End-to-end worked example
 
-Let's combine all three scoring primitives on a realistic input. Imagine
+Let's combine all four scoring primitives on a realistic input. Imagine
 the engine processing MSFT three days before an earnings event:
 
 ```python
+from engine.flow_score import compute_dealer_gamma_proxy
 from engine.scoring import (
-    iv_score, structure_score, event_score,
+    iv_score, structure_score, event_score, gamma_score,
     OiWalls, EventStats,
 )
 
 # Engine inputs flow in from the data layer hydrating ChainSnapshot + event calendar.
-# For this hand-trace, the numbers come from the M1.4 worked-example fixture.
+# For this hand-trace, the numbers come from the M1.4 worked-example fixture
+# plus a hand-picked dealer-gamma proxy.
 
 iv = iv_score(
     iv_rank=0.80,
@@ -706,9 +884,19 @@ event = event_score(
     ),
 )
 
+# dealer_gamma_proxy would come from compute_dealer_gamma_proxy() on the
+# actual chain. For this hand-trace, assume the chain returns -200_000 —
+# net short gamma above spot, vol amplifier.
+gamma = gamma_score(
+    dealer_gamma_proxy=-200_000.0,
+    spot=100.0,
+    gamma_walls=[],          # V1: no GEX module yet
+)
+
 print(f"iv: {iv.score:.3f}    breakdown: {dict(iv.breakdown)}")
 print(f"st: {structure.score:.3f}    breakdown: {dict(structure.breakdown)}")
 print(f"ev: {event.score:.3f}    breakdown: {dict(event.breakdown)}")
+print(f"gm: {gamma.score:.3f}  sign={gamma.sign:+d}    breakdown: {dict(gamma.breakdown)}")
 ```
 
 ### Hand-trace
@@ -737,22 +925,35 @@ print(f"ev: {event.score:.3f}    breakdown: {dict(event.breakdown)}")
 - `inner = 0.5 · 1.0 + 0.5 · 0.80 = 0.90`
 - `score = clip01(0.90 · 0.90) = `**`0.81`**
 
+**`gamma_score`:**
+
+- $D = 100 \cdot 10{,}000 = 1{,}000{,}000$
+- `proxy_magnitude = |-200_000| / 1_000_000 = 0.20`
+- `gamma_walls = []` → `walls_magnitude = 0`; no weight blend
+- `score = proxy_magnitude = `**`0.20`**
+- $\Pi < 0$ → `sign = -1` (amplifier)
+
 ### Downstream consumption
 
-The Market State Engine `classify()` consumes these three scores indirectly
-through its per-regime predicates (the M1.4 classify wires the *raw inputs*,
-not the scoring outputs, into its `_score_<regime>` helpers). But the
-Confidence Composer (M1.10), when it lands, will read:
+The Market State Engine `classify()` consumes the first three scores
+indirectly through its per-regime predicates (the M1.4 classify wires the
+*raw inputs*, not the scoring outputs, into its `_score_<regime>` helpers).
+The Flow Score Engine (M1.5b, planned) reads `gamma_score` for its
+`gamma_risk` and `gamma_context` fields. The Confidence Composer (M1.10),
+when it lands, will read:
 
 - `iv.score = 0.854` → `flow_alignment` and `signal_alignment` weighted contributions
 - `structure.score = 0.633` → `structure_alignment` contribution
 - `event.score = 0.81` → `event_risk_penalty` contribution
+- `gamma.score = 0.20`, `gamma.sign = -1` → flows into the Flow Score Engine's
+  `gamma_risk` ∈ [0, 1] field (magnitude) plus the recommendation rules
+  (sign-aware: amplifier = consider protection; dampener = consider premium-selling)
 
 The Confidence Composer's positive_weights (per [ADR-0003](../decisions/0003-confidence-composer-multiplicative.md) and plan §22.13) and penalty_caps blend these into a final $[0, 1]$ confidence. The breakdowns are surfaced in the UI as stacked bars so the user sees not just "confidence = 0.76" but "confidence is 0.76 because flow contributed 0.30·0.85, structure contributed 0.25·0.70, ..., and event risk took 15% off the top."
 
 ---
 
-## 8. Hands-on exercises
+## 9. Hands-on exercises
 
 Solutions are at the end of this section. Try them before peeking.
 
@@ -787,13 +988,18 @@ You're modeling a *forward guidance* day instead of a regular earnings day. The 
 
 A single name has `iv_score = 0.20, structure_score = 0.85, event_score = 0.05`. Describe in words what kind of market this is and what a long-equity holder might want to do (qualitatively — no specific trade advice).
 
-### Exercise 8 — Designing a 4th scoring fn
+### Exercise 8 — `gamma_score` sign vs magnitude
 
-The §9.11 wiring matrix lists `gamma_score` (M1.5a) but the M1.4a milestone deferred it. Sketch:
-(a) Inputs (1–3 fields).
-(b) The composite formula (one paragraph of pseudo-code).
-(c) Which engines should consume it (matrix row).
-(d) Where the V1 hand-coded weights map onto plan v1.2 §9.11 conventions.
+`gamma_score` is the only primitive whose result splits into `score` (magnitude in $[0, 1]$) and `sign` ($\in \{-1, 0, +1\}$).
+(a) Why is this split necessary — what would break if we encoded both into a single $[-1, +1]$ value?
+(b) Which downstream consumers need *only* the magnitude? Which need both?
+(c) The Confidence Composer's positive-weight math (§22.13) sums `flow_alignment + structure_alignment + ...`. Why would folding sign into the score itself violate that math?
+
+### Exercise 9 — `gamma_score` wall degradation
+
+`gamma_score` does **not** redistribute weight when `gamma_walls = []` (V1 default). Instead, the score equals `proxy_magnitude` directly (no `_W_PROXY = 0.7` factor).
+(a) Re-derive: if we *did* redistribute (i.e. divide `proxy_magnitude` by `_W_PROXY` when walls are empty), what would the score be for `dealer_gamma_proxy = -200_000`, `spot = 100`?
+(b) Why does the actual implementation **not** redistribute? (Hint: think about consumer trust under V1 calibration.)
 
 ---
 
@@ -817,19 +1023,19 @@ The factor isn't a clean constant — it depends on `magnitude`. For `m = 1.0`: 
 
 **E7.** **`iv_score = 0.20`** → IV is cheap (low rank, low percentile, or low IV/HV ratio). **`structure_score = 0.85`** → spot is tightly aligned with options structure (max pain, OI walls, near opex, tight EM). **`event_score = 0.05`** → essentially no scheduled event. This is the textbook **`LOW_IV_PIN`-adjacent** environment — low IV plus tight structure. (The Market State Engine doesn't have a LOW_IV_PIN regime; this would map to `HIGH_IV_PIN` in regime terms but with weak `iv_mid` because IV isn't high.) A long holder might buy cheap protective puts (low IV) and wait — vol-selling isn't attractive at low IV.
 
-**E8.** Outline:
+**E8.** (a) A single-value $[-1, +1]$ encoding loses information when downstream code takes a magnitude operation: $|-0.8| = |+0.8| = 0.8$. The Confidence Composer's positive-weights math (§22.13) sums *positive* contributions — feeding a signed value through `clip01` collapses negatives to 0 (losing them) or through `abs` collapses sign (losing direction). Splitting the result into `score ∈ [0, 1]` plus `sign ∈ {-1, 0, +1}` keeps both pieces of information addressable independently.
 
-(a) Inputs: `dealer_gamma_proxy: Decimal`, `spot: Decimal`, `gamma_walls: list[GammaWall]` (per plan §9.11 signature). Maybe 3 fields.
+(b) Magnitude-only consumers: Confidence Composer's `signal_alignment` (per §22.13) reads `score` and weight-blends it; the composer doesn't itself care about direction because direction is captured upstream (by the regime). Direction-aware consumers: Flow Score Engine `gamma_risk` field, Recommendation Engine rules in `rules.yaml` (e.g. "reduce coverage when gamma is negative AND |score| > 0.5"), Today screen UI badge.
 
-(b) Composite: signed magnitude in $[-1, 1]$ that the consumer maps to $[0, 1]$ via either `clip01((g + 1)/2)` (linear) or `clip01(|g|)` (magnitude-only). Components: dealer-gamma-proxy normalized by spot's GEX scale; nearest gamma-wall distance normalized by EM (analogous to `structure_score`); sign captures stabilizing-vs-amplifying.
+(c) The Composer's `compose()` is `positive = w_flow · flow + w_struct · struct + w_regime · regime + w_signal · signal`. If `signal_alignment` were signed, a strongly-amplifying gamma signal at `-0.85` would *subtract* from positive confidence rather than augment it — which is wrong: the Composer's "positive" inputs measure *signal strength*, not *signal direction*. Direction enters elsewhere (via the regime chosen by `classify()` and the recommendation rule selected).
 
-(c) Wiring (per §9.11): Flow Score Engine (orchestrator). Not consumed by Market State Engine directly (that's the iv/structure/event triple).
+**E9.** (a) With weight redistribution: `score = proxy_magnitude / 0.7 = 0.20 / 0.7 ≈ 0.286`.
 
-(d) Weights live at the top of `engine/scoring/gamma.py`, e.g. `_W_DEALER_GAMMA = 0.5`, `_W_GAMMA_WALL_DIST = 0.5`. V1 hand-coded; replaced by E1 GEX module in Phase 1.5 per [ADR-0008](../decisions/0008-enhancement-adoption-roadmap.md). At least 5 named test fixtures + 100% line coverage per plan §9.11.
+(b) Two reasons the implementation does **not** redistribute. **First**, V1 calibration trust: `_PROXY_NORMALIZATION_SCALE = 10_000.0` is a heuristic, so inflating proxy_magnitude when walls are absent would amplify calibration error. Conservative answer: when only the proxy is available, trust the proxy as it stands, no inflation. **Second**, the Phase 1.5 E1 GEX module supplies real walls per [ADR-0008](../decisions/0008-enhancement-adoption-roadmap.md); when that lands, callers naturally migrate from `gamma_walls=[]` to populated walls, and the weight blend `0.7·proxy + 0.3·walls` activates smoothly. Redistribution would create a discontinuity at the V1 → Phase 1.5 boundary, where the same physical chain would yield different `gamma_score.score` values just because walls were now provided.
 
 ---
 
-## 9. Further reading
+## 10. Further reading
 
 ### Project artifacts
 
@@ -846,11 +1052,13 @@ The factor isn't a clean constant — it depends on `magnitude`. For `m = 1.0`: 
 
 ### Code
 
-- [`packages/engine/engine/scoring/`](../../packages/engine/engine/scoring) — the three primitives + their result types.
+- [`packages/engine/engine/scoring/`](../../packages/engine/engine/scoring) — the four primitives + their result types.
+- [`packages/engine/engine/flow_score/`](../../packages/engine/engine/flow_score) — the dealer-gamma proxy producer (`compute_dealer_gamma_proxy()`) consumed by `gamma_score`.
 - [`packages/engine/engine/_utils.py`](../../packages/engine/engine/_utils.py) — `clip01` (shared with the rest of the engine).
 - [`packages/engine/tests/test_scoring_iv.py`](../../packages/engine/tests/test_scoring_iv.py)
   / [`test_scoring_structure.py`](../../packages/engine/tests/test_scoring_structure.py)
-  / [`test_scoring_event.py`](../../packages/engine/tests/test_scoring_event.py) — 59 tests, 100% line coverage.
+  / [`test_scoring_event.py`](../../packages/engine/tests/test_scoring_event.py)
+  / [`test_scoring_gamma.py`](../../packages/engine/tests/test_scoring_gamma.py) — 74 tests, 100% line coverage on `engine.scoring`.
 
 ### External / academic
 
@@ -870,7 +1078,7 @@ The factor isn't a clean constant — it depends on `magnitude`. For `m = 1.0`: 
 
 ---
 
-## 10. Glossary of symbols
+## 11. Glossary of symbols
 
 | Symbol | Meaning |
 |---|---|
@@ -887,10 +1095,14 @@ The factor isn't a clean constant — it depends on `magnitude`. For `m = 1.0`: 
 | $d_{\text{evt}}$ | `days_to_event` |
 | $d_{\text{opex}}$ | `days_to_nearest_opex` |
 | $\overline{\|r\|}$ | Average absolute event-day return = `EventStats.avg_abs_return_pct` |
+| $\Pi$ | Dealer-gamma proxy = `dealer_gamma_proxy` (signed; from `compute_dealer_gamma_proxy()`) |
+| $D$ | `gamma_score` normalizer = $S \cdot \text{\_PROXY\_NORMALIZATION\_SCALE}$ = $S \cdot 10{,}000$ |
+| $\mathcal{W}$ | Set of `GammaWall` records passed to `gamma_score`; $\|\mathcal{W}\|$ may be 0 |
 | $\mathrm{clip}_{[0,1]}(x)$ | Clip to closed unit interval |
 | `_W_*` | Component weight constant (sums to 1.0 per primitive) |
 | `_DEFAULT_KIND_WEIGHT` | 0.5 fallback for unknown / `None` event kinds |
 | `EVENT_KIND_WEIGHTS` | V1 weight prior table for recognized kinds |
+| `sign` | $\{-1, 0, +1\}$ field on `GammaScoreResult`; `-1` = amplifier, `+1` = dampener |
 
 ---
 

@@ -12,6 +12,45 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [0.8.0] — 2026-05-10
+
+### Added (engine — `engine.scoring.gamma`)
+
+- **`scoring.gamma_score()`** — composite dealer-gamma exposure score in `[0, 1]` (magnitude) plus a `sign` field in `{-1, 0, +1}` (direction). Per plan v1.2 §9.11.
+  - `proxy_magnitude` (weight 0.7) — `|dealer_gamma_proxy| / (spot · 10_000)` clipped to `[0, 1]`.
+  - `walls_magnitude` (weight 0.3) — average absolute `|GammaWall.gamma_exposure|` normalized the same way.
+  - **No weight redistribution** when `gamma_walls=[]` — `score = proxy_magnitude` directly. Avoids inflating proxy magnitude under V1 calibration; also avoids a discontinuity at the V1 → Phase 1.5 boundary when the E1 GEX module starts producing real walls.
+  - `sign` field is strictly the sign of `dealer_gamma_proxy`: `+1` = dampener (dealer net long gamma), `-1` = amplifier (dealer net short gamma), `0` = neutral. The split keeps the Confidence Composer's positive-weights math (per §22.13) intact while letting direction-aware consumers (Flow Score Engine's `gamma_risk`, recommendation rules) read both pieces.
+- **`scoring.GammaWall`** — frozen dataclass holding a strike-level gamma-exposure datum. Produced by the Phase 1.5 E1 GEX module (per [ADR-0008](./docs/decisions/0008-enhancement-adoption-roadmap.md)); V1 callers pass `gamma_walls=[]` and `gamma_score` degrades gracefully.
+- **`scoring.GammaScoreResult`** — frozen dataclass: `score: float ∈ [0, 1]` + `sign: int ∈ {-1, 0, +1}` + `breakdown: dict[str, float]` with keys `proxy_magnitude` and `walls_magnitude`.
+
+### Changed
+
+- `engine.__init__` re-exports `gamma_score`, `GammaScoreResult`, `GammaWall`.
+- `engine.scoring.__init__` re-exports the new symbols and updates the docstring (the wiring matrix now has all four scoring primitives shipped).
+- 15 new tests in `packages/engine/tests/test_scoring_gamma.py`: 10 named hand-computed references (neutral / amplifier / dampener / saturation / walls-blend / sign-symmetry / multi-wall averaging / zero-proxy-with-walls / clipping / breakdown-key stability), 2 validation tests, 3 Hypothesis property tests asserting `score ∈ [0, 1]`, sign symmetry under proxy negation, and sign matching the proxy's sign.
+- **100% line coverage** maintained on `engine.scoring` (CI step `Coverage check (engine.scoring 100%)` from §9.11 still green).
+
+### Docs
+
+- `docs/tutorials/scoring-primitives.md` extended with a new **§6 `gamma_score()` — dealer-gamma exposure**, covering: what it measures, inputs (`GammaWall` defined here), formula (with the `walls=[]` no-redistribution case), the score/sign split design choice, edge cases, V1 calibration caveat, worked example, code reference. Subsequent sections renumbered (§7 design philosophy, §8 worked example, §9 exercises, §10 further reading, §11 glossary). Updated:
+  - Header (title now lists all 4 primitives; engine version coverage notes `0.5.0` AND `0.8.0`)
+  - §1.1 (mentions `gamma_score`)
+  - §1.2 (wiring matrix narrative — "all four are now on `main`")
+  - §7.4 (test counts now include 15 gamma tests; 173 scoring tests overall)
+  - §8 end-to-end worked example: extended with a `gamma_score` call against a synthetic `-200_000` proxy, hand-traced to `score=0.20, sign=-1`
+  - Exercise 8 replaced (was "design a 4th scoring fn"); now two new exercises on sign/magnitude split and walls degradation, with detailed solutions
+  - §10 Further reading: links to `test_scoring_gamma.py`; test count updated to 74 across scoring
+  - §11 Glossary: adds `Π`, `D`, `𝒲`, `sign`
+
+### Plan refs
+
+v1.2 §9.11 (Scoring Functions Module — `gamma_score` signature & wiring), §17 M1.5a (size S, 100% coverage acceptance), §22.5 (clip01 reuse), §22.13 (breakdown for Confidence Composer), ADR-0008 (Phase 1.5 E1 GEX replaces the V1 proxy + introduces real `GammaWall` producers).
+
+PR: [#33](https://github.com/csupenn/option-mgmt-2026/pull/33)
+
+---
+
 ## [0.7.0] — 2026-05-10
 
 ### Added (engine — `engine.flow_score`)
