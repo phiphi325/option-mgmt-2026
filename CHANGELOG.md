@@ -12,6 +12,52 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [0.9.0] — 2026-05-10
+
+### Added (engine — `engine.flow_score.compute`)
+
+- **`flow_score.compute()`** — V1 LOCKED Flow Score Engine orchestrator per plan v1.2 §9.3 + §9.3a. The single public entry point that synthesizes OI walls, volume imbalances, IV skew, futures basis, put–call ratios, dealer gamma exposure, and pin pressure into a `FlowScore` result. Pure function (per [ADR-0005](./docs/decisions/0005-engine-pure-function-discipline.md)) — no I/O, no clock, no env. Kwargs-only signature: `compute(*, chain_snapshot, spot, expiry_focus, dte_to_nearest_opex=None)`. Twelve-step orchestration: (1) `compute_oi_walls` → (2) `compute_max_pain` → (3) `pcr_volume`/`pcr_oi` → (4) `skew_25d`/`futures_basis` stubs → (5) `compute_dealer_gamma_proxy` → (6) `gamma_score` → (7) 5-component bullish/bearish formulas → (8) `sigmoid_pin` → (9) bias bucketing → (10) decision tree → (11) confidence → (12) `render_explanation`.
+- **`flow_score.FlowScore`** — V1 LOCKED contract dataclass per plan §22.2 (frozen). Eleven fields: `score` (signed, `[-100, 100]`), `bullish_score` / `bearish_score` (`[0, 100]`), `bias`, `recommended_action`, `pin_probability` (`[0, 1]`), `gamma_risk` (magnitude, `[0, 1]`), `gamma_sign` (`{-1, 0, +1}`), `confidence` (`[0, 1]`), `explanation` (human-readable string), and `breakdown` (13-key stable dict). Field names and semantics are schema-locked for downstream Postgres / TypeScript codegen / Recommendation Engine `rules.yaml` stability.
+- **`flow_score.Bias`** — StrEnum: `BULLISH` / `NEUTRAL` / `BEARISH` / `PIN_RISK`. Wire-stable values. `PIN_RISK` is a first-class fourth state (not a modifier on the other three) because the Recommendation Engine's strategy whitelist for pinned chains is qualitatively different.
+- **`flow_score.RecommendedAction`** — StrEnum: `SELL_CALL_AGGRESSIVE` / `SELL_CALL_PARTIAL` / `WAIT` / `BUY_PROTECTION` / `REDUCE_COVERAGE` / `MONITOR`. Six values; first-match-wins from the §9.3a decision tree. `MONITOR` is the catch-all floor.
+- **`flow_score.sigmoid_pin()`** — multiplicative pin-probability estimator in `[0, 1]`. Three factors: `dist_factor` (piecewise-linear in spot-to-max-pain percentage; saturates at 1.0 within 2%, decays to 0 at 5%), `opex_factor` (linear to 1.0 at `dte = 0`, 0 beyond 14 trading days; identically 0 if `dte ≥ 30` or `None`), and `oi_factor` (the supplied `oi_concentration_at_max_pain`). Multiplicative-not-additive blend so that any one factor being weak kills the joint signal — a real pin requires *all three* in alignment.
+- **`flow_score.skew_25d()`** — **V1 stub**, returns `0.0`. The §9.3a formula treats `skew = avg over expiries of IV(25-Δ put) − IV(25-Δ call)`, but real 25-delta strike identification requires Black–Scholes delta, which lands in M1.6 Greeks. Until then, the stub honors the §9.3a contract's "0 if unavailable" semantics. Signature is the eventual M1.6 signature so callers don't need to change. When M1.6 lands and the body becomes a real Greeks-based implementation, the bullish/bearish formulas naturally pick up the 0.20-weight contribution **without recalibration** of any threshold.
+- **`flow_score.futures_basis()`** — **V1 stub**, returns `0.0`. The §9.3a formula uses `basis = (futures - spot) / spot` from the front-month equity-index future. Phase 1 of option-mgmt-2026 does not provision a futures-data service (`apps/api/app/services/futures_service.py` lands in Phase 2). The §9.3a formula explicitly says "0 if futures unavailable." Eagerly validates `spot > 0` at the boundary so callers can't accidentally pass invalid input and get a silent 0 back. When Phase 2 ships the service, replacing the stub adds the 0.15-weight basis contribution.
+- **`flow_score.render_explanation()`** — human-readable rationale builder. Returns a 2-to-4 sentence space-joined string. Always present: composite-score sentence and one of four wall sentences. Conditional: dealer-gamma sentence (when `gamma.sign != 0`) and pin sentence (when `pin_probability ≥ 0.6`). The string is **stable across patch bumps** — UI snapshot tests and downstream NLP / disclosure templates may anchor on phrases. Shares `_PIN_EXPLAIN_THRESHOLD = 0.6` with the bias bucketer, so `bias == PIN_RISK` ⇔ pin sentence present (test-asserted invariant).
+
+### Changed
+
+- `engine.flow_score.__init__` re-exports `compute`, `FlowScore`, `Bias`, `RecommendedAction`, `sigmoid_pin`, `skew_25d`, `futures_basis`, `render_explanation` alongside the existing `compute_oi_walls` and `compute_dealer_gamma_proxy`.
+- `engine.__init__` re-exports `compute`, `FlowScore`, `Bias`, `RecommendedAction` at the top level (consistent with the M1.4 `MarketStateResult` / `classify` precedent).
+- 57 new tests in `packages/engine/tests/test_flow_score_compute.py`: 4 `_volume_shares` tests, 4 `_dist_to_wall_norm` tests, 3 `_oi_concentration_at_max_pain` tests, 9 parametrized bias-bucketing tests, 13 parametrized decision-tree tests, 2 stub tests, 7 `sigmoid_pin` tests, 4 `render_explanation` tests, 7 `compute()` integration tests (shape, balanced→neutral, PCR=1.0 baseline asymmetry, bullish, bearish, pin_risk, confidence scaling, validation), 1 Hypothesis property test asserting bounded outputs across the input space with 100 examples. **96% line coverage** on `engine.flow_score` (the 4 uncovered lines are defensive fallbacks in upstream `oi_walls.py` and `dealer_gamma.py` unreachable when callers pass valid contracts).
+- Engine version bumped to **0.9.0** per ADR-0005 (new public function / new schema → minor bump).
+
+### Docs
+
+- New `docs/tutorials/flow-score-engine.md` (~59 KB / 1382 lines) — comprehensive M1.5b tutorial targeting 1st-year MFE students. Same template as the Market State Engine + Scoring Primitives tutorials. Thirteen sections:
+  1. **Why a Flow Score Engine?** — role in the architecture, §9.11 wiring matrix, design objectives.
+  2. **The V1 LOCKED `FlowScore` contract (§22.2)** — every field explained, gamma sign/magnitude split rationale, breakdown key stability.
+  3. **`compute()` — the orchestrator in twelve steps** — dependency DAG, validation, kwargs-only rationale.
+  4. **The 5-component bullish + bearish formulas (§9.3a)** — each component walked through with weights, normalizations, design choices (wall distance, volume share, IV skew stub, futures basis stub, PCR asymmetry).
+  5. **`sigmoid_pin()`** — three-factor multiplicative blend, design rationale, shared threshold with bias bucketer.
+  6. **Bias bucketing** — pin precedence, ±20-point dead zone, why `NEUTRAL` is a first-class enum.
+  7. **The §9.3a decision tree** — six rules table, gamma gates, `WAIT` vs `MONITOR`, scope rationale (no `BUY_CALL_*` in V1).
+  8. **Confidence and the explanation builder** — OI-based confidence scaling, multiplicative chain implications, explanation stability invariant.
+  9. **V1 stubs and forward compatibility** — why `skew_25d` and `futures_basis` return 0; how the formula activates naturally when M1.6 + Phase 2 land.
+  10. **End-to-end worked example** — synthetic MSFT-like chain hand-traced through all 12 steps, verified against the rig (`score = +46.2`, `bias = BULLISH`, `action = SELL_CALL_AGGRESSIVE`, `gamma_sign = -1`, `confidence = 0.106`).
+  11. **Hands-on exercises** — 9 exercises (symmetric chain, wall sensitivity, pin probability dimensions, `WAIT` vs `MONITOR`, sign-aware gating, confidence floor, skew goes live, explanation invariants, replay regression) with full solutions.
+  12. **Further reading** — plan refs, ADRs, sibling tutorials, code paths, external academic references (Sinclair, Garleanu/Pedersen/Poteshman, Ni/Pearson/Poteshman, Bollen/Whaley, SpotGamma white papers).
+  13. **Glossary** — every symbol used in the tutorial, every threshold constant.
+- `docs/tutorials/README.md` — index updated to add the new tutorial alongside `market-state-engine.md` and `scoring-primitives.md`.
+
+### Plan refs
+
+v1.2 §9.3 (Flow Score Engine spec), §9.3a (V1 LOCKED contract), §22.2 (FlowScore schema reconciliation), §22.13 (breakdown for Confidence Composer), §17 M1.5b (size M acceptance), ADR-0003 (multiplicative Confidence Composer), ADR-0005 (pure-function discipline + SemVer), ADR-0008 (Phase 4 ML node-swap replaces `compute()` body, Phase 1.5 E1 GEX supplies real `GammaWall` records).
+
+PR: [#34](https://github.com/csupenn/option-mgmt-2026/pull/34)
+
+---
+
 ## [0.8.0] — 2026-05-10
 
 ### Added (engine — `engine.scoring.gamma`)
