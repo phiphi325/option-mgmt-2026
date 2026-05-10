@@ -12,6 +12,40 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [0.7.0] — 2026-05-10
+
+### Added (engine — `engine.flow_score`)
+
+- **`flow_score.compute_oi_walls()`** — OI-derived support / resistance levels around spot, per plan v1.2 §9.3 step 1.
+  - Aggregates OI per strike across calls + puts in the focus expiries.
+  - Threshold = `percentile_threshold` (default `0.90`, top decile per §9.3) quantile of the per-strike OI distribution.
+  - Strict-`>` rule (per plan): only strikes with OI **strictly above** the threshold qualify as walls. Naturally handles flat distributions (no strike exceeds its own percentile → no walls); the trade-off is that tied peaks at the very top of the OI distribution sit AT the percentile and need a lower threshold to be picked up.
+  - `support` = nearest qualifying strike strictly below spot; `resistance` = nearest qualifying strike strictly above. Either may be `None`. A strike sitting on spot is neither.
+  - Reuses the existing `engine.scoring.structure.OiWalls` dataclass (no duplication). The §9.11 wiring matrix names `flow_score` as the *producer* and `structure_score` as the *consumer*.
+- **`flow_score.compute_dealer_gamma_proxy()`** — V1 signed proxy for dealer net gamma exposure, per plan v1.2 §9.3 step 4.
+  - Formula: `Σ sign(c) · OI(c) · (strike(c) - spot)` over contracts in `expiry_focus`, where `sign = -1` for calls and `+1` for puts.
+  - Negative result = net short gamma above spot (vol amplifier — dealer chases spot to delta-hedge); positive = net long gamma (vol dampener).
+  - Constant-gamma proxy (γ ≡ 1 per contract). The plan §9.3 formula uses BS gamma, which lands in M1.6; the full Phase 1.5 E1 GEX module replaces this proxy with proper signed gamma per ADR-0008.
+  - Magnitude is unbounded and not unit-meaningful — downstream consumers normalize before use.
+
+### Changed
+
+- `engine.__init__` re-exports `compute_oi_walls` and `compute_dealer_gamma_proxy`.
+- 34 new tests (245 → 279 total in `packages/engine/tests/`). 97% line coverage on `engine.flow_score` (the 2 uncovered lines are defensive `_percentile_value` fallback for empty input + a `per_strike_oi` empty branch — both unreachable when callers pass valid contracts).
+
+### Plan refs
+
+v1.2 §9.3 step 1 (OI walls) + step 4 (dealer-gamma proxy), §17 M1.5 (size M), §9.11 wiring matrix (flow_score is OiWalls producer; structure_score is consumer), ADR-0008 (E1 GEX in Phase 1.5 replaces the V1 dealer-gamma proxy).
+
+### Deferred
+
+- **M1.5a** — `scoring.gamma_score()` pure fn + tests. Lands separately as a scoring primitive.
+- **M1.5b** — Flow Score Engine `compute()` orchestrator returning the full §9.3a V1 contract (bullish/bearish/score/bias/pin_probability/gamma_risk/recommended_action/explanation). Requires M1.5a's `gamma_score`.
+
+PR: [#32](https://github.com/csupenn/option-mgmt-2026/pull/32)
+
+---
+
 ## [0.6.0] — 2026-05-10
 
 ### Added (engine — `engine.market_state.classify`)
