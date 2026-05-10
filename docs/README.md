@@ -13,6 +13,7 @@ Living documentation for option-mgmt-2026. Each file has a single owner and is u
 | [decisions/](./decisions/) | Architecture Decision Records (ADRs). One file per locked decision. |
 | [enhancements/](./enhancements/) | Third-party enhancement specs + per-spec feasibility assessments. Adoption decisions live in ADRs. |
 | [thread-transitions/](./thread-transitions/) | Per-AI-thread handoff records. One file per dev-agent thread, capturing what shipped, decisions made, gotchas, and the brief for the next thread. |
+| [tutorials/](./tutorials/) | Long-form pedagogical material. Aimed at first-year MFE students, quant-developer onboarding, and anyone who wants the *why* behind the engine — not just the API. |
 
 ## Living plan document
 
