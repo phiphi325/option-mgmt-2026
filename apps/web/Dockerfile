@@ -8,7 +8,7 @@
 #
 # pnpm via corepack so the host doesn't need pnpm pre-installed for builds.
 
-FROM node:22-alpine AS base
+FROM node:26-alpine AS base
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 ENV NEXT_TELEMETRY_DISABLED=1
 
