@@ -22,15 +22,28 @@ services:
   api:
     build: ./apps/api
     environment:
+      # Settings.jwt_secret has min_length=16. dev-secret-not-for-production
+      # is a stable, recognisable dev value; production overrides via secrets.
       DATABASE_URL: postgresql+psycopg://postgres:dev@postgres:5432/msft_engine
-      JWT_SECRET: dev-secret
+      JWT_SECRET: dev-secret-not-for-production
+      LOG_LEVEL: INFO
+      # GIT_SHA is injected by CI (M0.5+); locally it stays "unknown".
     depends_on:
       postgres:
         condition: service_healthy
     ports:
       - "8000:8000"
+    # The engine package is mounted for hot-reload during development; the
+    # docker image already includes a copy of it, but the volume overlays
+    # the running container with whatever is on the host (M1.x development).
     volumes:
       - ./packages/engine:/code/packages/engine
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   web:
     build: ./apps/web
