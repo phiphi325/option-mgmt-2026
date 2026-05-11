@@ -50,6 +50,12 @@ from engine.scoring import (
     iv_score,
     structure_score,
 )
+from engine.strike_selector import (
+    LegSide,
+    StrikeLeg,
+    StrikeSelection,
+    select_strikes,
+)
 from engine.types import ChainSnapshot, OptionContract, OptionType
 from engine.version import __version__
 
@@ -66,6 +72,7 @@ __all__ = [
     "GammaWall",
     "IncomeNeed",
     "IvScoreResult",
+    "LegSide",
     "MarketStateResult",
     "OiWalls",
     "OptionContract",
@@ -75,6 +82,8 @@ __all__ = [
     "Regime",
     "RiskTolerance",
     "StrategyClass",
+    "StrikeLeg",
+    "StrikeSelection",
     "StructureScoreResult",
     "UserStrategyProfile",
     "__version__",
@@ -89,6 +98,7 @@ __all__ = [
     "iv_score",
     "recommend",
     "rho",
+    "select_strikes",
     "structure_score",
     "theta",
     "time_to_expiry_years",

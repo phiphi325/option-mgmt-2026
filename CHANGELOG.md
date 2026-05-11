@@ -12,6 +12,86 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [0.12.0] — 2026-05-11
+
+### Added (engine — `engine.strike_selector`)
+
+- **`strike_selector.select_strikes()`** — V1 Strike Selector orchestrator per plan v1.2 §9.5. Consumes `Recommendation` (from M1.7) + `ChainSnapshot` and picks concrete option-leg `OptionContract`s using BS delta-matching against `Recommendation.parameters.target_delta` and DTE-matching against `target_dte`. Pure function (per [ADR-0005](./docs/decisions/0005-engine-pure-function-discipline.md)) — no I/O, no DB, no clock, no env. Kwargs-only signature: `select_strikes(*, recommendation, chain_snapshot, risk_free_rate=0.05, dividend_yield=0.0) -> StrikeSelection`. Pipeline per leg: (1) filter by option type + liquidity (`iv > 0`, `OI > 0`, valid bid/ask); (2) pick expiry whose DTE is closest to `target_dte` within `[7, 365]` days; (3) compute BS delta (using `engine.greeks.delta`) per contract with that contract's own IV; (4) pick the strike whose `|delta_actual − delta_target|` is minimized (tie-break by lower strike).
+
+- **`strike_selector.StrikeSelection`** — V1 contract dataclass (frozen). Three fields: `strategy_class` (echoed from input), `legs` (zero or more `StrikeLeg`s), `skipped_reason` (human-readable explanation when `legs` is empty).
+
+- **`strike_selector.StrikeLeg`** — V1 leg dataclass (frozen). Seven fields: `contract` (selected `OptionContract`), `side` (`LegSide.LONG` / `SHORT`), `delta_target` (signed: positive for calls, negative for puts), `delta_actual` (BS delta of selected contract using its own IV), `delta_distance` (`|delta_actual − delta_target|`), `dte_actual` (selected DTE), `mid_price` (mid quote, may be `None` for incomplete quotes).
+
+- **`strike_selector.LegSide`** — StrEnum: `LONG` / `SHORT`. Direction of the leg (NOT the contract's option type). Wire-stable.
+
+### Strategy → leg structure (V1)
+
+```
+COVERED_CALL_AGGRESSIVE  → SHORT call (target_sign = +1)
+COVERED_CALL_PARTIAL     → SHORT call (target_sign = +1)
+PROTECTIVE_PUT           → LONG  put  (target_sign = −1)
+COLLAR                   → SHORT call + LONG put  (2 legs, ordered)
+REDUCE_CALL_COVERAGE     → 0 legs (requires existing position context;
+                           handled by API layer)
+WAIT                     → 0 legs
+MONITOR                  → 0 legs
+```
+
+For `COLLAR`, leg order is stable: `legs[0]` is always the SHORT call, `legs[1]` is always the LONG put.
+
+### DTE band
+
+V1 priors per §9.5:
+- **`DTE_MIN_DAYS = 7`** — contracts expiring within a week are excluded (BS Greeks unstable, gamma risk dominates).
+- **`DTE_MAX_DAYS = 365`** — LEAPS excluded (noisy flow signals, wide bid/ask).
+
+Within the band, the selector picks the expiry whose DTE is closest to `target_dte`, tie-breaking by smaller DTE for determinism.
+
+ADR-0008 plans to move both bounds to `apps/api/app/config/rules.yaml` in Phase 1.5 for hot-swap without engine version bumps. V1 keeps them in-engine.
+
+### Delta matching
+
+- Uses `engine.greeks.delta` from M1.6 with the contract's own IV (smile-aware, not flat-vol naive).
+- Target delta is signed: `+target_delta` for call legs, `−target_delta` for put legs. Both target signs come from `Recommendation.parameters.target_delta` (always positive in the parameters dict; the leg spec applies the sign).
+- Materializes `(distance, strike, contract)` tuples eagerly inside the leg-selection loop to avoid the B023 closure-over-loop-variable footgun (M1.6 lesson).
+- Tie-break by lower strike for determinism.
+
+### Liquidity filters
+
+Each contract must pass:
+- `iv is not None and iv > 0` (BS delta requires positive σ).
+- `open_interest > 0`.
+- `bid is not None and ask is not None and ask >= bid >= 0` (valid two-sided quote).
+
+When no contract clears the filters for a required leg, the selector returns `StrikeSelection(legs=(), skipped_reason="...")` with a human-readable explanation.
+
+### Changed
+
+- `engine.__init__` re-exports `LegSide`, `StrikeLeg`, `StrikeSelection`, `select_strikes` at the top level (consistent with M1.7 `Recommendation` / `recommend` and earlier precedents).
+- Engine version bumped to **0.12.0** per ADR-0005 (new public function / new schema → minor bump).
+
+### Tests
+
+38 new tests in `packages/engine/tests/test_strike_selector.py`. **96% line coverage** on `engine.strike_selector` (the 4 uncovered lines are defensive fallbacks unreachable when callers pass valid inputs):
+
+- 5 strategy → leg-structure tests (each `RecommendedAction`-mapped `StrategyClass`).
+- 3 parametrized "no-leg strategies skip with reason" tests (`WAIT` / `MONITOR` / `REDUCE_CALL_COVERAGE`).
+- 6 DTE matching tests (closest expiry; tie-break; exact match; floor exclusion; ceiling exclusion; constants).
+- 4 delta-match tests (nearest strike; OTM call; OTM put; ATM target; smile-aware via own IV).
+- 7 liquidity filter tests (iv=None; iv=0; OI=0; missing quote; inverted quote; no-eligible-contracts; no-puts-for-protective-put; collar-skips-if-one-leg-unselectable).
+- 2 mid-price tests (uses contract.mid when present; falls back to (bid+ask)/2).
+- 2 validation tests (missing target_dte / target_delta in parameters).
+- 4 shape + determinism tests (return type; deterministic; StrikeSelection frozen; StrikeLeg frozen).
+- 3 Hypothesis property tests (50 examples each) — bounded delta distance; strategy class echoed through; selected leg DTE within `[DTE_MIN_DAYS, DTE_MAX_DAYS]`.
+
+### Plan refs
+
+v1.2 §9.5 (Strike Selector spec), §17 M1.8 (size M acceptance), §22.13 (downstream parameter contract from M1.7), ADR-0005 (pure-function discipline + SemVer), ADR-0008 (Phase 1.5 rules.yaml hot-swap; Phase 4 ML node-swap replaces `select_strikes()` body).
+
+PR: [#37](https://github.com/csupenn/option-mgmt-2026/pull/37)
+
+---
+
 ## [0.11.0] — 2026-05-11
 
 ### Added (engine — `engine.recommendation`)
