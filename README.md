@@ -6,7 +6,7 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 
 ## Status
 
-**Phase 1 — Engine MVP. In progress.** Engine `0.4.0`, 121 tests on `main`. See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-transitions/`](./docs/thread-transitions/) for thread-by-thread handoff records.
+**Phase 1 — Engine MVP. In progress.** Engine `1.1.0`, **226** tests on `main`. See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-transitions/`](./docs/thread-transitions/) for thread-by-thread handoff records.
 
 ### Phase 0 — Foundation ✅ (all 7 milestones merged)
 
@@ -29,9 +29,22 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 | ✅ | M1.1 — IV rank/percentile + HV (close-to-close + Parkinson) + 252-day seed | [#24](https://github.com/csupenn/option-mgmt-2026/pull/24) | `0.2.0` |
 | ✅ | M1.2 — max pain + expected move + put/call ratios | [#25](https://github.com/csupenn/option-mgmt-2026/pull/25) | `0.3.0` |
 | ✅ | M1.3 — Wilder ADX trend strength + 4-component breakout signal + `clip01` helper | [#26](https://github.com/csupenn/option-mgmt-2026/pull/26) | `0.4.0` |
-| ⏭️ | M1.4 — Market State Engine `classify()` + 24 regime fixtures | — | `0.5.0` |
-| | M1.5 — Flow Score Engine + OI walls + dealer-gamma proxy | — | — |
-| | M1.6–M1.25 — Strike Selector, Recommendation, Decision, Confidence Composer, Execution Feasibility, `/engine/*` APIs, Today screen | — | — |
+| ✅ | M1.4a — Scoring primitives (`iv_score` / `structure_score` / `event_score`) + 100% coverage gate | [#28](https://github.com/csupenn/option-mgmt-2026/pull/28) | `0.5.0` |
+| ✅ | M1.4 — Market State Engine `classify()` + 24 regime fixtures + REGIME_SPEC | — | `0.6.0` |
+| ✅ | M1.5 — Flow Score Engine scaffold + types (`FlowScore`, `Bias`, `RecommendedAction`) | — | `0.7.0` |
+| ✅ | M1.5a — `gamma_score` (magnitude + sign split) + dealer-gamma proxy + OI walls | — | `0.8.0` |
+| ✅ | M1.5b — Flow Score Engine `compute()` orchestrator + 5-component bullish/bearish formula | — | `0.9.0` |
+| ✅ | M1.6 — Black-Scholes Greeks (`delta` / `gamma` / `vega` / `theta` / `rho`); activates `skew_25d` | — | `0.10.0` |
+| ✅ | M1.7 — Strike Selector (`select_strikes()`) — BS delta-matching against `target_delta` + DTE matching | [#37](https://github.com/csupenn/option-mgmt-2026/pull/37) | `0.12.0` |
+| ✅ | M1.8 — Recommendation Engine (initial: regime-strategy whitelist + Python rules) | [#36](https://github.com/csupenn/option-mgmt-2026/pull/36) | `0.11.0` |
+| ✅ | M1.9 — Recommendation Engine plan-true: 8 YAML rules + 15-clause predicate vocabulary + plan-true `recommend()` contract | [#38](https://github.com/csupenn/option-mgmt-2026/pull/38) | `1.0.0` |
+| ✅ | M1.10 — Confidence Composer (multiplicative §22.13) + `weights.yaml` + 6 component scoring fns | [#39](https://github.com/csupenn/option-mgmt-2026/pull/39) | `1.1.0` |
+| | M1.11 — Execution Feasibility Module (liquidity / spread / slippage / fill) | — | — |
+| | M1.12 — Execution downgrade callback into Strike Selector | — | — |
+| | M1.13 — Master Decision Engine + `DailyDecision` schema (orchestrator) | — | — |
+| | M1.14–M1.25 — `/engine/*` APIs, Today screen, Collar Builder, Outcome Tracker | — | — |
+
+**Milestone-numbering correction.** PRs #36 and #37 were originally labeled "M1.7" and "M1.8" respectively; per plan v1.2 §17 the actual milestone numbers are swapped (Strike Selector is M1.7 size L; Recommendation Engine is M1.8 size M). The functional code is correct in both PRs — only the PR titles + branch names mis-labeled the milestone. The table above shows the canonical plan §17 mapping; CHANGELOG `[1.0.0]` documents the correction.
 
 See plan v1.2 §17 for the full milestone table; §22 is the canonical correction sheet (audit-resolved 2026-05-09).
 
@@ -48,6 +61,7 @@ See plan v1.2 §17 for the full milestone table; §22 is the canonical correctio
 | Tailwind | `^3.4` | `apps/web/package.json` |
 | FastAPI | `>=0.115` | `apps/api/pyproject.toml` |
 | SQLAlchemy | `>=2.0` (async) | `apps/api/pyproject.toml` |
+| PyYAML | `>=6.0` (engine runtime; loads `rules.yaml` + `weights.yaml`) | `packages/engine/pyproject.toml` |
 
 ## Documentation
 
@@ -60,6 +74,7 @@ Read [`docs/`](./docs/) before any code change:
 - [`docs/decisions/`](./docs/decisions/) — ADRs (engine-first, regime taxonomy, confidence composer, ...).
 - [`docs/enhancements/`](./docs/enhancements/) — third-party enhancement specs + per-spec assessments. Adoption decisions live in ADRs.
 - [`docs/thread-transitions/`](./docs/thread-transitions/) — per-AI-thread handoff records. One file per thread, capturing what shipped + decisions + handoff brief.
+- [`docs/tutorials/`](./docs/tutorials/) — long-form pedagogical tutorials (Market State, Scoring Primitives, Flow Score, **Confidence Composer**).
 - [`CHANGELOG.md`](./CHANGELOG.md) — per-engine-version changelog (Keep a Changelog format).
 
 The full development plan v1.2 lives in the Hyperagent thread `cmokf2twq0gsv06adlij0glqs`.
@@ -72,14 +87,18 @@ apps/
   api/              # FastAPI — engine endpoints                        [shipped M0.3]
   jobs/             # (Phase 2) scheduled ingestion — consolidated into apps/api/app/jobs/ in P1
 packages/
-  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6, growing]
+  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.1.0]
+    config/         # YAML configs (filesystem boundary per ADR-0005)
+      rules.yaml            # Recommendation Engine V1 rules            [M1.9]
+      weights.yaml          # Confidence Composer V1 weights (v2.0)     [M1.10]
     engine/
       _utils.py             # clip01() — engine-wide [0,1] saturation   [M1.3]
-      regimes.py            # 6 locked regimes (per ADR-0002)           [M0.6]
-      profiles.py           # UserStrategyProfile (frozen Pydantic)     [M0.6]
+      regimes.py            # 6 locked regimes + REGIME_SPEC table      [M0.6 / M1.4]
+      profiles.py           # UserStrategyProfile + ProfileStyle        [M0.6 / M1.9]
       types.py              # OptionContract + ChainSnapshot            [M0.6]
-      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 0.4.0]
-      market_state/
+      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.1.0]
+      greeks.py             # BS delta/gamma/vega/theta/rho             [M1.6]
+      market_state/         # M1.1-M1.4 — produces MarketStateResult
         iv.py               # IV rank + IV percentile                   [M1.1]
         hv.py               # close-to-close + Parkinson HV             [M1.1]
         expected_move.py    # ATM straddle + forward-IV expected move   [M1.2]
@@ -87,12 +106,42 @@ packages/
         pcr.py              # put/call ratios (volume + OI)             [M1.2]
         trend_strength.py   # Wilder ADX, normalized [0,1]              [M1.3]
         breakout.py         # 4-component composite breakout signal     [M1.3]
+        classify.py         # 6-regime classifier + MarketStateResult   [M1.4]
+      scoring/              # M1.4a + M1.5a — *ScoreResult primitives
+        iv.py               # IV score (rank/percentile/HV blend)       [M1.4a]
+        structure.py        # Wall/pin/opex/EM structure score          [M1.4a]
+        event.py            # Event proximity × magnitude × kind        [M1.4a]
+        gamma.py            # Dealer gamma magnitude + sign             [M1.5a]
+      flow_score/           # M1.5-M1.5b — Flow Score Engine
+        compute.py          # 5-component bullish/bearish orchestrator  [M1.5b]
+        oi_walls.py         # Open-interest wall identification         [M1.5a]
+        dealer_gamma.py     # Dealer-gamma proxy                        [M1.5a]
+        skew.py             # 25-delta call/put skew (BS-driven)        [M1.6]
+        futures_basis.py    # V1 stub — futures-service lands in P2     [M1.5b]
+        pin_probability.py  # Spot-to-max-pain × opex × OI blend        [M1.5b]
+        explanation.py      # Human-readable rationale builder          [M1.5b]
+        types.py            # FlowScore + Bias + RecommendedAction      [M1.5]
+      strike_selector/      # M1.7 — BS delta-matched strike picking
+        select.py           # select_strikes(*, action, chain, ...)     [M1.7]
+        types.py            # StrikeSelection + StrikeLeg + LegSide     [M1.7]
+      recommendation/       # M1.8 + M1.9 — YAML-driven rule pipeline
+        recommend.py        # recommend() orchestrator                  [M1.9]
+        rules.py            # 15-clause evaluator + rule selection      [M1.9]
+        rationale.py        # Mustache-style {{var}} substitution       [M1.9]
+        warnings.py         # Caveat-string builder                     [M1.9]
+        yaml_loader.py      # rules.yaml filesystem boundary            [M1.9]
+        types.py            # RuleSpec, Action, EmittedAction, ...      [M1.9]
+      confidence/           # M1.10 — multiplicative composer (§22.13)
+        compose.py          # compose() — the formula                   [M1.10]
+        components.py       # 6 per-component scoring functions         [M1.10]
+        yaml_loader.py      # weights.yaml filesystem boundary          [M1.10]
+        types.py            # ConfidenceInputs + Weights + Breakdown    [M1.10]
   shared-types/     # TS types generated from Pydantic                  [shipped M0.6]
     src/            # generated regimes.ts / profiles.ts / types.ts
     scripts/
       generate.py   # the codegen — single source of truth bridge
 seeds/csv/          # local-dev seed data per §21 of the plan           [iv_history M1.1]
-docs/               # principles, architecture, ADRs, SSOT map, transitions
+docs/               # principles, architecture, ADRs, SSOT map, transitions, tutorials
 scripts/            # dev tooling + CI guards + run_smoke.sh             [shipped M0.4–M0.7]
 .github/workflows/  # CI                                                 [shipped M0.5]
 docker-compose.yml  # Phase 1 simplified (postgres + api + web)
@@ -148,7 +197,7 @@ Every PR runs through GitHub Actions (`.github/workflows/ci.yml`):
 
 - **guards** — `check_next_version.sh`, `check_no_broker_imports.sh`, `check_engine_version_bump.sh`
 - **api** — ruff + mypy --strict + pytest
-- **engine** — ruff + mypy --strict + pytest + shared-types codegen drift check
+- **engine** — ruff + mypy --strict + pytest + 100% coverage on `engine.scoring` + shared-types codegen drift check
 - **web** — eslint + tsc + vitest + next build (apps/web), tsc (packages/shared-types)
 - **smoke** — real Postgres + alembic upgrade + uvicorn + httpx pytest
 
@@ -162,16 +211,16 @@ uv run python ../shared-types/scripts/generate.py
 git add packages/shared-types/src
 ```
 
-CI's drift check fails any commit that updates the Python without regenerating the TS.
+CI's drift check fails any commit that updates the Python without regenerating the TS. A parallel drift gate covers Confidence Composer weights: `tests/test_confidence.py::test_default_weights_matches_yaml_drift_check` asserts `engine.confidence.DEFAULT_WEIGHTS == load_default_weights()`, so edits to `packages/engine/config/weights.yaml` without updating `engine/confidence/__init__.py` (or vice versa) fail CI.
 
 ## Conventions
 
-- **Engine-first.** `packages/engine` is pure-function Python with no I/O. Every API and UI piece exists to surface or input to engine outputs.
+- **Engine-first.** `packages/engine` is pure-function Python with no I/O. Every API and UI piece exists to surface or input to engine outputs. Two filesystem boundary modules (`engine/recommendation/yaml_loader.py`, `engine/confidence/yaml_loader.py`) handle the `rules.yaml` / `weights.yaml` reads; callers pass the parsed values to `recommend()`.
 - **Auditable.** Every `DailyDecision` is persisted with `inputs_hash`, `engine_version`, `weights_version` for exact replay.
 - **No execution.** This codebase has no broker write paths. CI guard (`scripts/check_no_broker_imports.sh`, M0.5) enforces it.
-- **Deterministic V1 → ML in Phase 4.** ML upgrades replace specific engine nodes without changing interfaces.
+- **Deterministic V1 → ML in Phase 4.** ML upgrades replace specific engine nodes without changing interfaces. V1 stubs (`futures_basis = 0` until P2 futures service; `illiquidity_penalty = 0` until M1.11 Execution Feasibility) are plumbed through explicit kwargs so the M1.x → V2 hand-off is a one-line callsite change.
 - **Branch + PR workflow.** Every milestone is a branch named `feat/<milestone-id>-<slug>`, merged via squash into `main`. Conventional-commit messages.
-- **Engine version bump on every `packages/engine/engine/` change.** Per [ADR-0005](./docs/decisions/0005-engine-pure-function-discipline.md). CI guard enforces.
+- **Engine version bump on every `packages/engine/engine/` change.** Per [ADR-0005](./docs/decisions/0005-engine-pure-function-discipline.md). CI guard enforces. Bump rules: patch (bug fix, no schema change), minor (new engine, score, or public function), major (schema change, removed/renamed fields, semantic shift).
 
 ## Disclaimers
 
