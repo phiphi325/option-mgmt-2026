@@ -12,6 +12,95 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [0.11.0] — 2026-05-11
+
+### Added (engine — `engine.recommendation`)
+
+- **`recommendation.recommend()`** — V1 Recommendation Engine orchestrator per plan v1.2 §9.4. Consumes `MarketStateResult` + `FlowScore` + `UserStrategyProfile` and produces a concrete `Recommendation`. Pure function (per [ADR-0005](./docs/decisions/0005-engine-pure-function-discipline.md)) — no I/O, no DB, no clock, no env. Kwargs-only signature: `recommend(*, market_state, flow_score, user_profile) -> Recommendation`. Eight-step pipeline: (1) map `FlowScore.recommended_action` → natural `StrategyClass`; (2) apply regime-based downgrade rules; (3) apply user-profile overrides; (4) apply min-IV-rank gate for short-premium strategies; (5) compose two-engine confidence; (6) generate downstream parameters; (7) build rationale; (8) build warnings tuple.
+
+- **`recommendation.Recommendation`** — V1 contract dataclass (frozen). Seven fields: `strategy_class` (the selected `StrategyClass`), `action` (echoed `RecommendedAction` from upstream), `regime` (echoed `Regime` from upstream), `confidence` (composite in `[0, 1]`), `rationale` (human-readable 2-4 sentence string), `warnings` (tuple of caveat strings), and `parameters` (dict[str, float] of forward-looking parameters for the M1.8 Strike Selector and M1.11a Collar Builder).
+
+- **`recommendation.StrategyClass`** — StrEnum of seven concrete strategy classes: `COVERED_CALL_AGGRESSIVE` / `COVERED_CALL_PARTIAL` / `PROTECTIVE_PUT` / `COLLAR` / `REDUCE_CALL_COVERAGE` / `WAIT` / `MONITOR`. Wire-stable values. Strategy classes are the next layer of refinement beyond the §9.3a `RecommendedAction` enum — adding regime + profile context to the high-level action.
+
+- **`recommendation.build_warnings()`** — Generates the warnings tuple from upstream state. Six triggers, each producing at most one stable-substring warning: low confidence (< 0.20), event window (≤ 7 days), opex proximity (≤ 3 days), dealer gamma amplifier (`gamma_sign == -1 AND gamma_risk ≥ 0.5`), borderline FlowScore (`|score| < 15`), and IV rank below the user's `min_iv_rank_for_short_premium` (only for short-premium actions). Stable across patch bumps — UI snapshots and downstream NLP / compliance templates may anchor on substrings like "Low confidence" or "Event window".
+
+- **`recommendation.render_rationale()`** — Builds the 2-4 sentence rationale string. Three sentences always present (strategy + action; market state + regime score; flow context with score + bias). One optional fourth sentence when the regime or profile rule overrode the natural strategy mapping. Eight stable downgrade-reason strings exported as module constants (`DOWNGRADE_REASON_HIGH_IV_EVENT`, etc.).
+
+### Decision rules (V1, in-engine)
+
+Regime × action → strategy mapping ships in `engine/recommendation/recommend.py` as Python constants. ADR-0008 plans to move these rules to `apps/api/app/config/rules.yaml` in Phase 1.5 so they can be hot-swapped without engine version bumps. V1 rules:
+
+- **`SELL_CALL_AGGRESSIVE` regime downgrades:**
+  - `HIGH_IV_EVENT` → `COVERED_CALL_PARTIAL` (event uncertainty)
+  - `HIGH_IV_PIN` → `WAIT` (pin distorts directional bets)
+  - `LOW_IV_TREND` → `COVERED_CALL_PARTIAL` (premium too cheap for aggressive)
+  - `BREAKOUT` → `COVERED_CALL_PARTIAL` (don't cap upside on breakout)
+  - `POST_EVENT_REPRICE` → `MONITOR` (recent dislocation; observe)
+  - `LOW_IV_RANGE` → unchanged (clean environment)
+- **`SELL_CALL_PARTIAL` regime downgrades:**
+  - `HIGH_IV_PIN` → `WAIT`
+  - `POST_EVENT_REPRICE` → `MONITOR`
+- **User-profile rule:** `RiskTolerance.CONSERVATIVE` + `COVERED_CALL_AGGRESSIVE` → downgrade to `COVERED_CALL_PARTIAL`.
+- **Collar preference:** `BUY_PROTECTION` + `prefer_collars_over_covered_calls=True` → `COLLAR` (else `PROTECTIVE_PUT`).
+- **IV-rank gate:** Short-premium actions (`SELL_CALL_*`) are vetoed to `MONITOR` if `market_state.iv_rank * 100 < user_profile.min_iv_rank_for_short_premium`.
+
+### Confidence
+
+V1 composite confidence is a simple two-engine multiplicative blend:
+
+    composite = flow_score.confidence × market_state.regime_score
+
+The M1.10 Confidence Composer (per [ADR-0003](./docs/decisions/0003-confidence-composer-multiplicative.md)) will replace this with a richer multi-engine blend across the four scoring primitives + the flow score + the regime confidence. Until then, this two-engine product is the conservative V1 baseline. The product is in `[0, 1]` because both factors are.
+
+### Parameters dict (stable keys)
+
+Forward-looking parameters the M1.8 Strike Selector and M1.11a Collar Builder consume:
+
+- `target_dte: float` — days to expiry for the new option leg.
+- `target_delta: float` — absolute delta of the new option leg.
+- `size_pct: float` — fraction of underlying position to act on.
+- `urgency_days: float` — rough days-to-act window (1=today, 5=this week, 21=this month, 100=monitor).
+
+Per-strategy V1 priors:
+
+| Strategy | target_dte | target_delta | size_pct | urgency_days |
+|---|---:|---:|---:|---:|
+| `COVERED_CALL_AGGRESSIVE` | 30 | 0.25 | 0.50 | 5 |
+| `COVERED_CALL_PARTIAL` | 30 | 0.35 | 0.30 | 5 |
+| `PROTECTIVE_PUT` | 60 | 0.25 | 1.00 | 1 |
+| `COLLAR` | 45 | 0.25 | 0.75 | 5 |
+| `REDUCE_CALL_COVERAGE` | 0 | 0.00 | 1.00 | 1 |
+
+`WAIT` and `MONITOR` ship empty parameter dicts since no action is taken. Phase 4 ML may learn these from realized P&L per ADR-0008.
+
+### Changed
+
+- `engine.__init__` re-exports `Recommendation`, `StrategyClass`, `recommend` at the top level (consistent with the M1.4 `MarketStateResult` / `classify` and M1.5b `FlowScore` / `compute` precedents).
+- Engine version bumped to **0.11.0** per ADR-0005 (new public function / new schema → minor bump).
+
+### Tests
+
+57 new tests in `packages/engine/tests/test_recommendation.py`. **100% line coverage** on `engine.recommendation`:
+
+- 6 base mapping tests (one per `RecommendedAction` → `StrategyClass`)
+- 9 regime override tests (`HIGH_IV_EVENT` / `HIGH_IV_PIN` × `AGGRESSIVE`/`PARTIAL` / `LOW_IV_TREND` / `BREAKOUT` / `POST_EVENT_REPRICE` / `LOW_IV_RANGE` preserved / collar preference on / off)
+- 3 user-profile override tests (`CONSERVATIVE` downgrades aggressive; `MODERATE` / `AGGRESSIVE` preserve)
+- 3 IV-rank gate tests (vetoes short-premium; protective unaffected; boundary inclusive/exclusive)
+- 3 confidence composition tests (product formula; clip at 1; zero when either factor is zero)
+- 6 parameters tests (keys per strategy; aggressive δ < partial δ; aggressive size > partial size; protective fully covered; WAIT / MONITOR empty)
+- 14 warning tests (each of 6 triggers + 8 boundary / negative cases)
+- 3 rationale builder tests (all required fields present; downgrade text; downgrade absent when none)
+- 3 shape + determinism tests (full shape; deterministic; frozen)
+- 3 Hypothesis property tests (100 examples each) asserting bounded confidence in `[0, 1]`, valid `StrategyClass` enum across the Cartesian product of inputs, and exact-product confidence formula.
+
+### Plan refs
+
+v1.2 §9.4 (Recommendation Engine spec), §17 M1.7 (size M acceptance), §22.13 (downstream parameters for M1.8 Strike Selector), ADR-0003 (multiplicative Confidence Composer), ADR-0005 (pure-function discipline + SemVer), ADR-0008 (Phase 1.5 rules.yaml hot-swap; Phase 4 ML node-swap replaces `recommend()` body).
+
+PR: [#36](https://github.com/csupenn/option-mgmt-2026/pull/36)
+
+---
+
 ## [0.10.0] — 2026-05-10
 
 ### Added (engine — `engine.greeks`)

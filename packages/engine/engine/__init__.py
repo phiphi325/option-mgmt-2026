@@ -29,6 +29,11 @@ from engine.greeks import (
 )
 from engine.market_state import MarketStateResult, classify
 from engine.profiles import IncomeNeed, RiskTolerance, UserStrategyProfile
+from engine.recommendation import (
+    Recommendation,
+    StrategyClass,
+    recommend,
+)
 from engine.regimes import REGIME_COLORS, Regime
 from engine.scoring import (
     EVENT_KIND_WEIGHTS,
@@ -65,9 +70,11 @@ __all__ = [
     "OiWalls",
     "OptionContract",
     "OptionType",
+    "Recommendation",
     "RecommendedAction",
     "Regime",
     "RiskTolerance",
+    "StrategyClass",
     "StructureScoreResult",
     "UserStrategyProfile",
     "__version__",
@@ -80,6 +87,7 @@ __all__ = [
     "gamma",
     "gamma_score",
     "iv_score",
+    "recommend",
     "rho",
     "structure_score",
     "theta",
