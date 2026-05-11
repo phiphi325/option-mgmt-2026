@@ -1,0 +1,46 @@
+# V1 Confidence Composer weights.
+#
+# Per plan v1.2 §22.13 (multiplicative-penalty redesign). The v1.0/v1.1
+# additive formula in §9.7 is superseded — its achievable range
+# [-0.20, +0.80] meant confidence post-clip was bounded at 0.80
+# rather than 1.0. v2.0 restores a true [0, 1] codomain.
+#
+# Formula:
+#   positive_score = clip01(
+#     flow   * flow_alignment +
+#     struct * structure_alignment +
+#     regime * regime_match +
+#     signal * signal_alignment
+#   )
+#   penalty_mult = (1 - event     * event_risk_penalty) *
+#                  (1 - liquidity * illiquidity_penalty)
+#   confidence = clip01(positive_score * penalty_mult)
+#
+# Constraints (enforced by Weights.__post_init__):
+#   - positive_weights.{flow, struct, regime, signal} sum to 1.0
+#   - penalty_caps.{event, liquidity} each in [0, 1]
+#
+# ADR-0008 Phase 1.5 plan: this file moves to
+# `apps/api/app/config/weights.yaml` so it can be hot-swapped
+# without bumping engine version. Until then the engine ships its
+# packaged default here.
+#
+# Drift check: the in-code constant `engine.confidence.DEFAULT_WEIGHTS`
+# must equal `load_default_weights()`. A unit test enforces this so
+# the on-disk YAML and the in-memory default stay in sync.
+#
+# Bumping the values? Update both this file and the constant, and bump
+# `version` so persisted DailyDecisions remain attributable to the
+# weights that produced them.
+
+version: "v2.0"
+
+positive_weights:
+  flow:    0.30
+  struct:  0.25
+  regime:  0.25
+  signal:  0.20
+
+penalty_caps:
+  event:     0.30
+  liquidity: 0.25

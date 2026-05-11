@@ -628,21 +628,28 @@ def test_rationale_substitutes_iv_rank(packaged_rules: tuple[RuleSpec, ...]) -> 
 def test_rationale_substitutes_confidence(packaged_rules: tuple[RuleSpec, ...]) -> None:
     """hold_no_op rationale has {{confidence}} placeholder.
 
-    To force `hold_no_op`, we need iv_rank < 50 so `high_iv_sell_call`
-    doesn't fire first.
+    To force `hold_no_op`, drop iv_rank below the high_iv_sell_call
+    threshold (50) AND keep composite confidence below 0.30 so the
+    `confidence_lte: 0.30` clause matches. With the M1.10 composer
+    (§22.13 multiplicative formula), confidence values shift relative
+    to the old `flow × regime` stub — we assert that the rendered
+    integer percent appears in the rationale rather than pinning a
+    specific value.
     """
     rec = recommend(
         market_state=_market_state(
             regime=Regime.LOW_IV_RANGE, regime_score=0.20, iv_rank=0.30
         ),
-        flow_score=_flow_score(confidence=0.20),  # 0.20 × 0.20 = 0.04 (< 0.30)
+        flow_score=_flow_score(confidence=0.20),
         positions=_positions(),
         profile=_user_profile(),
         rules=packaged_rules,
     )
     assert rec.matched_rule is not None
     assert rec.matched_rule.rule_id == "hold_no_op"
-    assert "4%" in rec.rationale[0]  # 0.20 × 0.20 = 0.04 → "4%"
+    # Rendered as integer percent (see render_rationale): e.g.
+    # "Signal alignment too low (17%); no high-conviction action".
+    assert f"{int(round(rec.confidence * 100))}%" in rec.rationale[0]
 
 
 # ----------------------------------------------------------------------
@@ -650,19 +657,43 @@ def test_rationale_substitutes_confidence(packaged_rules: tuple[RuleSpec, ...]) 
 # ----------------------------------------------------------------------
 
 
-def test_confidence_is_flow_times_regime(
+def test_confidence_is_composer_output(
     packaged_rules: tuple[RuleSpec, ...],
 ) -> None:
+    """M1.10: confidence now flows through `engine.confidence.compose()`.
+
+    The old `flow.confidence × regime_score` stub is replaced by the
+    multiplicative formula (§22.13). We re-derive the expected number
+    from the composer's component functions so the assertion stays
+    valid if calibration constants in `engine.confidence.components`
+    are tweaked — only the formula structure is pinned.
+    """
+    from engine.confidence import (
+        DEFAULT_WEIGHTS,
+        compose,
+        compute_confidence_inputs,
+    )
+
     flow = _flow_score(confidence=0.40)
     ms = _market_state(regime_score=0.60)
+    profile = _user_profile()
+
     rec = recommend(
         market_state=ms,
         flow_score=flow,
         positions=_positions(),
-        profile=_user_profile(),
+        profile=profile,
         rules=packaged_rules,
     )
-    assert rec.confidence == pytest.approx(0.40 * 0.60, abs=1e-12)
+
+    expected_inputs = compute_confidence_inputs(
+        market_state=ms, flow_score=flow, profile=profile
+    )
+    expected_confidence, _ = compose(expected_inputs, DEFAULT_WEIGHTS)
+    assert rec.confidence == pytest.approx(expected_confidence, abs=1e-12)
+    # The new field is populated by recommend()
+    assert rec.confidence_breakdown is not None
+    assert rec.confidence_breakdown.weights_version == "v2.0"
 
 
 def test_coverage_after_sell_covered_call(

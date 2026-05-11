@@ -52,6 +52,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from engine._utils import clip01
+from engine.confidence import (
+    DEFAULT_WEIGHTS,
+    ConfidenceBreakdown,
+    Weights,
+    compose,
+    compute_confidence_inputs,
+)
 from engine.flow_score.types import FlowScore
 from engine.market_state.classify import MarketStateResult
 from engine.profiles import UserStrategyProfile
@@ -141,7 +148,7 @@ _DECREASES_COVERAGE: frozenset[EmittedAction] = frozenset(
 
 
 # ----------------------------------------------------------------------
-# Composite confidence (V1 two-engine multiplicative blend)
+# Composite confidence — delegates to engine.confidence (M1.10)
 # ----------------------------------------------------------------------
 
 
@@ -149,13 +156,32 @@ def _composite_confidence(
     *,
     flow_score: FlowScore,
     market_state: MarketStateResult,
-) -> float:
-    """V1: `flow_score.confidence × market_state.regime_score`.
+    profile: UserStrategyProfile,
+    weights: Weights,
+    illiquidity_penalty: float = 0.0,
+) -> tuple[float, ConfidenceBreakdown]:
+    """Confidence Composer entry point per plan §22.13 (M1.10).
 
-    M1.10 Confidence Composer will replace this with the multi-engine
-    blend per ADR-0003.
+    Builds the six-component `ConfidenceInputs` from upstream engine
+    state, then runs the multiplicative composer with the supplied
+    weights. Returns both the scalar confidence and the explainable
+    breakdown so M1.13 (Master Decision Engine) can persist the latter
+    on `DailyDecision` without re-running the composer.
+
+    `illiquidity_penalty` is a passthrough for the M1.11 Execution
+    Feasibility Module. Until M1.11 lands, the recommender uses `0.0`.
     """
-    return clip01(flow_score.confidence * market_state.regime_score)
+    inputs = compute_confidence_inputs(
+        market_state=market_state,
+        flow_score=flow_score,
+        profile=profile,
+        illiquidity_penalty=illiquidity_penalty,
+    )
+    confidence, breakdown = compose(inputs, weights)
+    # Defensive: compose() already clips, but a downstream consumer
+    # that bypasses compose() shouldn't be able to leak an out-of-range
+    # value through this helper.
+    return clip01(confidence), breakdown
 
 
 # ----------------------------------------------------------------------
@@ -224,8 +250,10 @@ def recommend(
     positions: PositionState,
     profile: UserStrategyProfile,
     rules: Sequence[RuleSpec],
+    weights: Weights | None = None,
+    illiquidity_penalty: float = 0.0,
 ) -> RecommendationResult:
-    """V1 Recommendation Engine `recommend()` per plan §9.5 (M1.9).
+    """V1 Recommendation Engine `recommend()` per plan §9.5 (M1.9 + M1.10).
 
     Args:
         market_state: Upstream `MarketStateResult` from
@@ -238,10 +266,20 @@ def recommend(
             v1.0.0 profile with `drawdown_tolerance` + `style` fields.
         rules: Pre-parsed sequence of `RuleSpec`s. Typically the
             output of `engine.recommendation.yaml_loader.load_default_rules()`.
+        weights: Confidence Composer weights (M1.10). Defaults to
+            `engine.confidence.DEFAULT_WEIGHTS` — the in-code
+            mirror of `packages/engine/config/weights.yaml`. Passing
+            `None` keeps `recommend()` pure (no filesystem read);
+            production callers that hot-swap weights pass the result
+            of `engine.confidence.load_default_weights()` or
+            `load_weights_yaml(path)`.
+        illiquidity_penalty: M1.11 Execution Feasibility passthrough.
+            Defaults to `0.0` until M1.11 ships a real value.
 
     Returns:
         `RecommendationResult` per plan §9.5. Carries `actions[]`,
-        the `matched_rule`, `coverage_after`, plus rationale / risks /
+        the `matched_rule`, `coverage_after`, `confidence`, the
+        `confidence_breakdown` (M1.10), rationale / risks /
         invalidation / warnings.
 
     Raises:
@@ -258,8 +296,13 @@ def recommend(
             "must be present in the rule set."
         )
 
-    confidence = _composite_confidence(
-        flow_score=flow_score, market_state=market_state
+    effective_weights = weights if weights is not None else DEFAULT_WEIGHTS
+    confidence, breakdown = _composite_confidence(
+        flow_score=flow_score,
+        market_state=market_state,
+        profile=profile,
+        weights=effective_weights,
+        illiquidity_penalty=illiquidity_penalty,
     )
 
     ctx = EvaluationContext(
@@ -307,6 +350,7 @@ def recommend(
         regime=market_state.regime,
         coverage_after=coverage,
         confidence=confidence,
+        confidence_breakdown=breakdown,
         rationale=rationale,
         risks=risks,
         invalidation=invalidation,

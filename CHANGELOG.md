@@ -12,6 +12,90 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [1.1.0] — 2026-05-11
+
+### Added (engine — `engine.confidence`, new module per plan §9.7 + §22.13)
+
+- **`engine.confidence`** — M1.10 Confidence Composer with the multiplicative-penalty formula locked by plan §22.13 (the v2.0 redesign that replaces the §9.7 v1.0 additive form). The §9.7 additive formula has an achievable range of `[-0.20, +0.80]`, capping post-clip confidence at 0.80; v2.0's multiplicative penalties restore a true `[0, 1]` codomain. Public surface:
+  - Frozen-dataclass types: `ConfidenceInputs` (six raw component values), `Weights` (with `PositiveWeights` + `PenaltyCaps`), `ConfidenceBreakdown` (explainable output — inputs + `positive_score` + `penalty_multiplier` + `weights_version`).
+  - `compose(inputs, weights) -> tuple[float, ConfidenceBreakdown]` — the canonical composer per §22.13.
+  - Per-component scoring fns: `compute_flow_alignment`, `compute_structure_alignment`, `compute_regime_match`, `compute_signal_alignment`, `compute_event_risk_penalty`, `compute_illiquidity_penalty`, plus the aggregate constructor `compute_confidence_inputs(*, market_state, flow_score, profile, illiquidity_penalty=0.0)`.
+  - YAML loader (filesystem boundary per ADR-0005): `load_weights_yaml(path)`, `load_default_weights()`.
+  - In-code constant `DEFAULT_WEIGHTS: Final[Weights]` — mirrors the packaged YAML so `recommend()` has a no-I/O default. A unit test asserts the two stay in sync (`load_default_weights() == DEFAULT_WEIGHTS`).
+- **`packages/engine/config/weights.yaml`** — V1 weights config:
+  ```yaml
+  version: "v2.0"
+  positive_weights: { flow: 0.30, struct: 0.25, regime: 0.25, signal: 0.20 }   # sums to 1.0
+  penalty_caps:     { event: 0.30, liquidity: 0.25 }                            # each in [0, 1]
+  ```
+  ADR-0008 Phase 1.5 plan: file moves to `apps/api/app/config/weights.yaml` for hot-swap without bumping engine version.
+- **`RecommendationResult.confidence_breakdown: ConfidenceBreakdown | None = None`** — new optional field, always populated by `recommend()`. M1.13 (Master Decision Engine) will persist it on `DailyDecision` alongside `engine_version` + `weights_version` + `inputs_hash` for exact replay.
+
+### Changed (engine — `engine.recommendation`)
+
+- **`recommend()` signature extended** with two optional kwargs (non-breaking — existing callers continue to work):
+  - `weights: Weights | None = None` — confidence composer weights. Defaults to `engine.confidence.DEFAULT_WEIGHTS` (no I/O). Production callers that want hot-swap pass the result of `load_default_weights()` / `load_weights_yaml(path)`.
+  - `illiquidity_penalty: float = 0.0` — passthrough for the M1.11 Execution Feasibility Module. Until M1.11 ships, callers leave this at the default; M1.13 will wire `engine.execution.assess(...)` output through.
+- **`_composite_confidence()` rewired** to delegate to `engine.confidence.compose()`. The old `flow.confidence × market_state.regime_score` stub is gone. Confidence values now flow through the six-component multiplicative formula — this is observable as a difference in `RecommendationResult.confidence` across the same inputs; rules with `confidence_lte:` clauses (e.g. `hold_no_op` at 0.30) match against the new value.
+
+### V1 component-scoring priors (replaceable in Phase 4 ML per ADR-0008)
+
+- `flow_alignment = 0.5 × flow.confidence + 0.5 × |flow.score| / 100` (reliability × decisiveness)
+- `structure_alignment = 0.50 × trend_strength + 0.30 × breakout_signal + 0.20 × oi_concentration_at_max_pain`
+- `regime_match = market_state.regime_score` (direct passthrough)
+- `signal_alignment = 0.5 × regime_score + 0.5 × flow.confidence` (cross-engine agreement)
+- `event_risk_penalty` — linear ramp `(30 - days_to_next_event) / 30` over 30 days, with a 1.5× boost when `drawdown_tolerance < 0.10` per plan §9.7 line 1553; clipped to `[0, 1]`. Returns 0 when `days_to_next_event is None`.
+- `illiquidity_penalty` — V1 stub returning `0.0`. Plumbed as an explicit kwarg through `compute_confidence_inputs` → `recommend()` so M1.11 + M1.13 can pipe a real value through with no further engine surgery.
+
+### Tests
+
+- 64 new tests in `tests/test_confidence.py`:
+  - Type-level validation: each ConfidenceInputs field rejected outside `[0, 1]`; Weights rejects sum ≠ 1.0 (with `1e-6` fuzz tolerance), negative positive weights, out-of-range penalty caps.
+  - §22.13 worked example pinned exactly (`positive=0.79`, `penalty_mult=0.957875`, `confidence ≈ 0.7567`, rounds to `0.76` as the plan states).
+  - compose() edge cases: perfect components → 1.0; zero components → 0.0; isolated event penalty → multiplier 0.70; isolated liquidity penalty → 0.75; both maxed → 0.525.
+  - Per-component formulas verified against their docstring math (incl. drawdown-tolerance boost + clip-to-1.0 edge).
+  - YAML loader: missing required keys (top-level, positive, penalty), non-mapping shape, non-numeric values, booleans explicitly rejected, sum-to-1.0 violation rejected at parse time, forward-tolerant unknown top-level keys.
+  - **Drift check**: `DEFAULT_WEIGHTS == load_default_weights()` — the M1.10 equivalent of the shared-types codegen drift gate.
+  - `recommend()` integration: breakdown populated, default weights honored, custom weights change output, illiquidity passthrough verified, determinism (byte-identical breakdowns on repeated calls).
+  - Three Hypothesis property tests: bounded output for any `[0, 1]` inputs (200 examples), monotone in positive components, antitone in penalties.
+- 100% line coverage on `engine.confidence` (160 statements, 0 missed).
+- Two existing tests in `tests/test_recommendation.py` updated:
+  - `test_rationale_substitutes_confidence`: no longer pins `"4%"` (specific to the old stub); now matches the rendered `NN%` substring against the new composer's output.
+  - `test_confidence_is_flow_times_regime` renamed → `test_confidence_is_composer_output`. Re-derives the expected confidence by calling `compose()` directly so the assertion stays valid if calibration priors are tweaked; also asserts `confidence_breakdown` is populated.
+
+### Dependencies
+
+No new runtime deps (PyYAML was already added in M1.9).
+
+### Migration
+
+Existing callers of `recommend(...)` keep working with no code changes — the new kwargs are optional with sensible defaults. To customize:
+
+```python
+from engine.confidence import load_default_weights
+from engine.recommendation import recommend
+
+# Hot-swap weights at startup (Phase 1.5 ADR-0008 path):
+weights = load_default_weights()  # or load_weights_yaml(custom_path)
+rec = recommend(
+    market_state=ms,
+    flow_score=fs,
+    positions=positions,
+    profile=profile,
+    rules=rules,
+    weights=weights,                  # optional; defaults to DEFAULT_WEIGHTS
+    illiquidity_penalty=0.0,          # M1.11 passthrough; default 0.0
+)
+
+# Access the breakdown for UI display / replay:
+breakdown = rec.confidence_breakdown
+print(breakdown.positive_score, breakdown.penalty_multiplier, breakdown.weights_version)
+```
+
+The `DailyDecision` row (M1.13) will persist `breakdown.weights_version` alongside `engine_version` + `inputs_hash` for exact replay across calibration changes.
+
+---
+
 ## [1.0.0] — 2026-05-11
 
 ### Milestone correction (retrospective, no code change)

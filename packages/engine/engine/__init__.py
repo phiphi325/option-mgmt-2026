@@ -11,6 +11,18 @@ M0.6 ships only the type vocabulary. Scoring + decision functions land in M1+.
 
 from __future__ import annotations
 
+from engine.confidence import (
+    DEFAULT_WEIGHTS,
+    ConfidenceBreakdown,
+    ConfidenceInputs,
+    PenaltyCaps,
+    PositiveWeights,
+    Weights,
+    compose,
+    compute_confidence_inputs,
+    load_default_weights,
+    load_weights_yaml,
+)
 from engine.flow_score import (
     Bias,
     FlowScore,
@@ -66,11 +78,14 @@ from engine.types import ChainSnapshot, OptionContract, OptionType
 from engine.version import __version__
 
 __all__ = [
+    "DEFAULT_WEIGHTS",
     "EVENT_KIND_WEIGHTS",
     "REGIME_COLORS",
     "Action",
     "Bias",
     "ChainSnapshot",
+    "ConfidenceBreakdown",
+    "ConfidenceInputs",
     "EmittedAction",
     "EventKind",
     "EventScoreResult",
@@ -86,7 +101,9 @@ __all__ = [
     "OiWalls",
     "OptionContract",
     "OptionType",
+    "PenaltyCaps",
     "PositionState",
+    "PositiveWeights",
     "ProfileStyle",
     "RecommendationResult",
     "RecommendedAction",
@@ -97,9 +114,12 @@ __all__ = [
     "StrikeSelection",
     "StructureScoreResult",
     "UserStrategyProfile",
+    "Weights",
     "__version__",
     "classify",
+    "compose",
     "compute",
+    "compute_confidence_inputs",
     "compute_dealer_gamma_proxy",
     "compute_oi_walls",
     "delta",
@@ -108,7 +128,9 @@ __all__ = [
     "gamma_score",
     "iv_score",
     "load_default_rules",
+    "load_default_weights",
     "load_rules_yaml",
+    "load_weights_yaml",
     "recommend",
     "rho",
     "select_strikes",

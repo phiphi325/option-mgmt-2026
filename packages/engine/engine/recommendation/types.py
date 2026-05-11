@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from engine.confidence.types import ConfidenceBreakdown
 from engine.regimes import Regime
 
 
@@ -135,7 +136,7 @@ class MatchedRule:
 
 @dataclass(frozen=True)
 class RecommendationResult:
-    """V1 Recommendation Engine output per plan §9.5.
+    """V1 Recommendation Engine output per plan §9.5 (M1.9 + M1.10).
 
     Fields:
         actions:               Tuple of `Action`s emitted by the
@@ -149,8 +150,16 @@ class RecommendationResult:
         coverage_after:        Estimated coverage ratio after the
                                emitted actions apply. In `[0, 1]`.
                                `0.0` when no underlying shares.
-        confidence:            Echoed composite confidence from
-                               upstream (V1 = `flow × regime`).
+        confidence:            Composite confidence from the M1.10
+                               Confidence Composer (multiplicative
+                               formula per §22.13). In `[0, 1]`.
+        confidence_breakdown:  Explainable component breakdown (M1.10)
+                               — the six raw inputs + `positive_score`
+                               + `penalty_multiplier` + `weights_version`.
+                               Optional for backwards compatibility
+                               with M1.9 test fixtures that build
+                               `RecommendationResult` directly; the
+                               engine itself always populates it.
         rationale:             Per-action rationale strings rendered
                                from the matched rule's template.
         risks:                 Echoed risks from the matched rule.
@@ -170,6 +179,7 @@ class RecommendationResult:
     regime: Regime
     coverage_after: float
     confidence: float
+    confidence_breakdown: ConfidenceBreakdown | None = None
     rationale: tuple[str, ...] = ()
     risks: tuple[str, ...] = ()
     invalidation: tuple[str, ...] = ()
