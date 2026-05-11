@@ -36,6 +36,22 @@ class IncomeNeed(StrEnum):
     HIGH = "high"
 
 
+class ProfileStyle(StrEnum):
+    """Overall portfolio style. Drives some §22.8 rule predicates
+    (notably `wheel_on_low_iv_range` which requires `profile_style: "income"`).
+
+    Distinct from `RiskTolerance` (which is about volatility tolerance):
+    a `growth` portfolio can be either MODERATE or AGGRESSIVE risk, and an
+    `income` portfolio is typically MODERATE risk with `IncomeNeed.HIGH`.
+
+    Added in M1.9 (engine 1.0.0) for the plan v1.2 §22.8 rule vocabulary.
+    """
+
+    INCOME = "income"
+    BALANCED = "balanced"
+    GROWTH = "growth"
+
+
 class UserStrategyProfile(BaseModel):
     """Frozen user profile — flows into the engine as a parameter (no I/O).
 
@@ -68,3 +84,18 @@ class UserStrategyProfile(BaseModel):
     # otherwise eligible (insurance bias). When False, plain covered calls are
     # preferred (income bias). Defaults are wired at the API layer, not here.
     prefer_collars_over_covered_calls: bool
+
+    # Drawdown tolerance — fraction of portfolio the user is willing to lose
+    # in a worst-case scenario. Drives the §22.8 `drawdown_tolerance_lte`
+    # predicate (e.g. rule `buy_long_dated_put_low_iv_trend` only fires when
+    # `drawdown_tolerance <= 0.20`).
+    #
+    # Added in M1.9 (engine 1.0.0). Default 0.15 matches the plan §2 personas.
+    drawdown_tolerance: float = Field(default=0.15, ge=0.0, le=1.0)
+
+    # Overall portfolio style. Drives the §22.8 `profile_style` predicate
+    # (e.g. rule `wheel_on_low_iv_range` only fires when style == "income").
+    #
+    # Added in M1.9. Default `BALANCED` is the safest fallback for callers
+    # that haven't set a style yet.
+    style: ProfileStyle = Field(default=ProfileStyle.BALANCED)

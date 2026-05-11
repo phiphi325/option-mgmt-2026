@@ -1,15 +1,18 @@
-"""Recommendation Engine tests (M1.7).
+"""Recommendation Engine V1 tests (M1.9, plan-true).
 
-Per plan v1.2 §17 M1.7 acceptance and §9.4.
+Per plan v1.2 §17 M1.8 + M1.9 acceptance, §9.5, and §22.8.
 
-Test discipline (mirrors M1.4 / M1.5b / M1.6 patterns):
-- Direct fixture-based assertions on action × regime × profile mapping
-- Hand-computed composite confidence checks
-- Warning generation per individual trigger
-- Hypothesis property tests for bounded outputs and determinism
+Test discipline:
+- Direct fixture-based assertions on each of the 8 V1 rules firing
+- YAML loader validation: malformed YAML, unknown clauses, bad emit
+- Predicate evaluator clause-by-clause
+- Regime whitelist + first-match-wins ordering
+- Hypothesis property tests for bounded confidence + determinism
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -17,33 +20,37 @@ from hypothesis import strategies as st
 
 from engine.flow_score.types import Bias, FlowScore, RecommendedAction
 from engine.market_state.classify import MarketStateResult
-from engine.profiles import IncomeNeed, RiskTolerance, UserStrategyProfile
+from engine.profiles import IncomeNeed, ProfileStyle, RiskTolerance, UserStrategyProfile
 from engine.recommendation import (
-    Recommendation,
-    StrategyClass,
-    build_warnings,
+    EmittedAction,
+    EvaluationContext,
+    PositionState,
+    RecommendationResult,
+    RuleSpec,
+    evaluate_clause,
+    is_emit_in_regime_whitelist,
+    load_rules_yaml,
+    matches,
     recommend,
-    render_rationale,
+    select_winning_rule,
+    supported_clauses,
 )
-from engine.recommendation.warnings import (
-    BORDERLINE_SCORE_BAND,
-    EVENT_WINDOW_DAYS,
-    GAMMA_AMPLIFIER_MAGNITUDE,
-    LOW_CONFIDENCE_THRESHOLD,
-    OPEX_PROXIMITY_DAYS,
-)
+from engine.recommendation.yaml_loader import _parse_rules_text
 from engine.regimes import Regime
 
 # ----------------------------------------------------------------------
-# helpers — build minimal valid upstream results
+# helpers
 # ----------------------------------------------------------------------
+
+
+_PACKAGED_RULES_PATH = Path(__file__).resolve().parent.parent / "config" / "rules.yaml"
 
 
 def _flow_score(
     *,
-    action: RecommendedAction = RecommendedAction.SELL_CALL_AGGRESSIVE,
-    bias: Bias = Bias.BULLISH,
-    score: float = 46.0,
+    action: RecommendedAction = RecommendedAction.MONITOR,
+    bias: Bias = Bias.NEUTRAL,
+    score: float = 0.0,
     confidence: float = 0.50,
     gamma_sign: int = 0,
     gamma_risk: float = 0.20,
@@ -69,17 +76,19 @@ def _market_state(
     regime: Regime = Regime.LOW_IV_RANGE,
     regime_score: float = 0.60,
     iv_rank: float = 0.55,
+    iv_rank_change_1d: float | None = 0.0,
     days_to_next_event: int | None = None,
     next_event_kind: str | None = None,
+    days_since_event: int | None = None,
     days_to_nearest_opex: int | None = None,
+    spot: float = 100.0,
 ) -> MarketStateResult:
-    """Build a MarketStateResult with only the fields recommend() reads."""
     return MarketStateResult(
         regime=regime,
         regime_score=regime_score,
         all_scores={r: 0.0 for r in Regime},
         tags=(),
-        spot=100.0,
+        spot=spot,
         iv_rank=iv_rank,
         iv_percentile=0.5,
         hv_30=0.20,
@@ -94,9 +103,9 @@ def _market_state(
         oi_concentration_at_max_pain=0.2,
         days_to_next_event=days_to_next_event,
         next_event_kind=next_event_kind,
-        days_since_event=None,
+        days_since_event=days_since_event,
         days_to_nearest_opex=days_to_nearest_opex,
-        iv_rank_change_1d=None,
+        iv_rank_change_1d=iv_rank_change_1d,
         gap_pct=None,
     )
 
@@ -107,6 +116,8 @@ def _user_profile(
     income_need: IncomeNeed = IncomeNeed.MEDIUM,
     min_iv_rank: int = 30,
     prefer_collars: bool = False,
+    drawdown_tolerance: float = 0.15,
+    style: ProfileStyle = ProfileStyle.BALANCED,
 ) -> UserStrategyProfile:
     return UserStrategyProfile(
         risk_tolerance=risk_tolerance,
@@ -115,469 +126,589 @@ def _user_profile(
         max_coverage_pct=0.75,
         min_iv_rank_for_short_premium=min_iv_rank,
         prefer_collars_over_covered_calls=prefer_collars,
+        drawdown_tolerance=drawdown_tolerance,
+        style=style,
     )
 
 
+def _positions(**kwargs: object) -> PositionState:
+    return PositionState(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.fixture(scope="module")
+def packaged_rules() -> tuple[RuleSpec, ...]:
+    """Load the 8 V1 rules from the packaged config/rules.yaml."""
+    return load_rules_yaml(_PACKAGED_RULES_PATH)
+
+
 # ----------------------------------------------------------------------
-# Base mapping: RecommendedAction → StrategyClass (no overrides)
+# YAML loader
+# ----------------------------------------------------------------------
+
+
+def test_load_default_rules_returns_eight(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """The packaged rules.yaml has exactly the 8 V1 rules per §22.8."""
+    assert len(packaged_rules) == 8
+
+
+def test_load_default_rules_ids(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    expected = {
+        "high_iv_sell_call",
+        "roll_up_and_out_when_short_call_threatened",
+        "reduce_coverage_on_breakout_post_event",
+        "open_collar_pre_event",
+        "buy_long_dated_put_low_iv_trend",
+        "monetize_put_on_breakout",
+        "wheel_on_low_iv_range",
+        "hold_no_op",
+    }
+    assert {r.id for r in packaged_rules} == expected
+
+
+def test_load_default_rules_emits(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """Every loaded rule emits a valid EmittedAction."""
+    for r in packaged_rules:
+        assert isinstance(r.emit, EmittedAction)
+
+
+def test_load_rules_yaml_missing_file_raises() -> None:
+    with pytest.raises(FileNotFoundError):
+        load_rules_yaml(Path("/nonexistent/rules.yaml"))
+
+
+def test_parse_rules_empty_yaml_raises() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        _parse_rules_text("", source="<test>")
+
+
+def test_parse_rules_not_a_list_raises() -> None:
+    with pytest.raises(ValueError, match="top level must be a list"):
+        _parse_rules_text("foo: bar\n", source="<test>")
+
+
+def test_parse_rules_missing_required_field() -> None:
+    with pytest.raises(ValueError, match="missing required fields"):
+        _parse_rules_text(
+            "- id: x\n  when: {}\n  emit: NO_OP\n", source="<test>"
+        )  # missing rationale
+
+
+def test_parse_rules_bad_emit() -> None:
+    with pytest.raises(ValueError, match="invalid emit"):
+        _parse_rules_text(
+            "- id: x\n"
+            "  when: {}\n"
+            "  emit: NOT_A_REAL_ACTION\n"
+            "  rationale: foo\n",
+            source="<test>",
+        )
+
+
+def test_parse_rules_unsupported_clause() -> None:
+    with pytest.raises(ValueError, match="unsupported clauses"):
+        _parse_rules_text(
+            "- id: x\n"
+            "  when: { not_a_real_clause: 5 }\n"
+            "  emit: NO_OP\n"
+            "  rationale: foo\n",
+            source="<test>",
+        )
+
+
+def test_parse_rules_when_not_mapping() -> None:
+    with pytest.raises(ValueError, match="invalid 'when' block"):
+        _parse_rules_text(
+            "- id: x\n"
+            "  when: [a, b]\n"
+            "  emit: NO_OP\n"
+            "  rationale: foo\n",
+            source="<test>",
+        )
+
+
+def test_parse_rules_risks_not_list() -> None:
+    with pytest.raises(ValueError, match="must be a list"):
+        _parse_rules_text(
+            "- id: x\n"
+            "  when: {}\n"
+            "  emit: NO_OP\n"
+            "  rationale: foo\n"
+            "  risks: not_a_list\n",
+            source="<test>",
+        )
+
+
+# ----------------------------------------------------------------------
+# Clause evaluator
+# ----------------------------------------------------------------------
+
+
+def test_supported_clauses_count() -> None:
+    """All 15 documented clause keys are supported."""
+    sup = supported_clauses()
+    expected = {
+        "confidence_lte",
+        "days_since_event_lte",
+        "days_to_expiry_lte",
+        "days_to_next_event_lte",
+        "drawdown_tolerance_lte",
+        "has_long_put",
+        "has_short_call",
+        "has_short_call_within_pct",
+        "has_short_put",
+        "iv_rank_change_1d_lte",
+        "iv_rank_gte",
+        "iv_rank_lte",
+        "profile_style",
+        "put_pnl_pct_gte",
+        "regime",
+    }
+    assert sup == expected
+
+
+def _ctx(
+    *,
+    market_state: MarketStateResult | None = None,
+    flow_score: FlowScore | None = None,
+    positions: PositionState | None = None,
+    profile: UserStrategyProfile | None = None,
+    confidence: float = 0.50,
+) -> EvaluationContext:
+    return EvaluationContext(
+        market_state=market_state or _market_state(),
+        flow_score=flow_score or _flow_score(),
+        positions=positions or _positions(),
+        profile=profile or _user_profile(),
+        confidence=confidence,
+    )
+
+
+def test_clause_regime_string() -> None:
+    ctx = _ctx(market_state=_market_state(regime=Regime.HIGH_IV_EVENT))
+    assert evaluate_clause(key="regime", value="HIGH_IV_EVENT", ctx=ctx) is True
+    assert evaluate_clause(key="regime", value="LOW_IV_RANGE", ctx=ctx) is False
+
+
+def test_clause_regime_list() -> None:
+    ctx = _ctx(market_state=_market_state(regime=Regime.LOW_IV_RANGE))
+    assert (
+        evaluate_clause(
+            key="regime", value=["HIGH_IV_EVENT", "LOW_IV_RANGE"], ctx=ctx
+        )
+        is True
+    )
+    assert (
+        evaluate_clause(key="regime", value=["BREAKOUT", "LOW_IV_TREND"], ctx=ctx)
+        is False
+    )
+
+
+def test_clause_iv_rank_gte() -> None:
+    ctx = _ctx(market_state=_market_state(iv_rank=0.65))
+    assert evaluate_clause(key="iv_rank_gte", value=50, ctx=ctx) is True
+    assert evaluate_clause(key="iv_rank_gte", value=70, ctx=ctx) is False
+
+
+def test_clause_iv_rank_lte() -> None:
+    ctx = _ctx(market_state=_market_state(iv_rank=0.25))
+    assert evaluate_clause(key="iv_rank_lte", value=30, ctx=ctx) is True
+    assert evaluate_clause(key="iv_rank_lte", value=20, ctx=ctx) is False
+
+
+def test_clause_iv_rank_change_1d_lte() -> None:
+    ctx = _ctx(market_state=_market_state(iv_rank_change_1d=-0.20))
+    assert evaluate_clause(key="iv_rank_change_1d_lte", value=-15, ctx=ctx) is True
+    ctx2 = _ctx(market_state=_market_state(iv_rank_change_1d=0.05))
+    assert evaluate_clause(key="iv_rank_change_1d_lte", value=-15, ctx=ctx2) is False
+
+
+def test_clause_iv_rank_change_1d_lte_none_means_false() -> None:
+    ctx = _ctx(market_state=_market_state(iv_rank_change_1d=None))
+    assert evaluate_clause(key="iv_rank_change_1d_lte", value=-15, ctx=ctx) is False
+
+
+def test_clause_days_to_next_event_lte() -> None:
+    ctx = _ctx(market_state=_market_state(days_to_next_event=5))
+    assert evaluate_clause(key="days_to_next_event_lte", value=7, ctx=ctx) is True
+    assert evaluate_clause(key="days_to_next_event_lte", value=3, ctx=ctx) is False
+
+
+def test_clause_days_to_next_event_lte_none_means_false() -> None:
+    ctx = _ctx(market_state=_market_state(days_to_next_event=None))
+    assert evaluate_clause(key="days_to_next_event_lte", value=7, ctx=ctx) is False
+
+
+def test_clause_days_since_event_lte() -> None:
+    ctx = _ctx(market_state=_market_state(days_since_event=1))
+    assert evaluate_clause(key="days_since_event_lte", value=2, ctx=ctx) is True
+
+
+def test_clause_has_short_call() -> None:
+    ctx = _ctx(positions=_positions(has_short_call=True))
+    assert evaluate_clause(key="has_short_call", value=True, ctx=ctx) is True
+    assert evaluate_clause(key="has_short_call", value=False, ctx=ctx) is False
+
+
+def test_clause_has_short_call_within_pct() -> None:
+    """Short call at K=101 vs spot=100 → within 1.5%, but not within 0.5%."""
+    ctx = _ctx(
+        market_state=_market_state(spot=100.0),
+        positions=_positions(has_short_call=True, nearest_short_call_strike=101.0),
+    )
+    assert (
+        evaluate_clause(key="has_short_call_within_pct", value=1.5, ctx=ctx) is True
+    )
+    assert (
+        evaluate_clause(key="has_short_call_within_pct", value=0.5, ctx=ctx) is False
+    )
+
+
+def test_clause_has_short_call_within_pct_no_short_call() -> None:
+    ctx = _ctx(positions=_positions(has_short_call=False))
+    assert (
+        evaluate_clause(key="has_short_call_within_pct", value=1.5, ctx=ctx) is False
+    )
+
+
+def test_clause_has_long_put() -> None:
+    ctx = _ctx(positions=_positions(has_long_put=True))
+    assert evaluate_clause(key="has_long_put", value=True, ctx=ctx) is True
+    assert evaluate_clause(key="has_long_put", value=False, ctx=ctx) is False
+
+
+def test_clause_has_short_put() -> None:
+    ctx = _ctx(positions=_positions(has_short_put=True))
+    assert evaluate_clause(key="has_short_put", value=True, ctx=ctx) is True
+
+
+def test_clause_days_to_expiry_lte() -> None:
+    ctx = _ctx(
+        positions=_positions(has_short_call=True, nearest_short_call_dte=10)
+    )
+    assert evaluate_clause(key="days_to_expiry_lte", value=14, ctx=ctx) is True
+    assert evaluate_clause(key="days_to_expiry_lte", value=5, ctx=ctx) is False
+
+
+def test_clause_put_pnl_pct_gte() -> None:
+    ctx = _ctx(positions=_positions(has_long_put=True, long_put_pnl_pct=0.40))
+    assert evaluate_clause(key="put_pnl_pct_gte", value=0.30, ctx=ctx) is True
+    assert evaluate_clause(key="put_pnl_pct_gte", value=0.50, ctx=ctx) is False
+
+
+def test_clause_put_pnl_pct_gte_no_put() -> None:
+    ctx = _ctx(positions=_positions(has_long_put=False, long_put_pnl_pct=0.40))
+    assert evaluate_clause(key="put_pnl_pct_gte", value=0.30, ctx=ctx) is False
+
+
+def test_clause_drawdown_tolerance_lte() -> None:
+    ctx = _ctx(profile=_user_profile(drawdown_tolerance=0.15))
+    assert evaluate_clause(key="drawdown_tolerance_lte", value=0.20, ctx=ctx) is True
+    assert evaluate_clause(key="drawdown_tolerance_lte", value=0.10, ctx=ctx) is False
+
+
+def test_clause_profile_style() -> None:
+    ctx = _ctx(profile=_user_profile(style=ProfileStyle.INCOME))
+    assert evaluate_clause(key="profile_style", value="income", ctx=ctx) is True
+    assert evaluate_clause(key="profile_style", value="growth", ctx=ctx) is False
+
+
+def test_clause_confidence_lte() -> None:
+    ctx = _ctx(confidence=0.25)
+    assert evaluate_clause(key="confidence_lte", value=0.30, ctx=ctx) is True
+    assert evaluate_clause(key="confidence_lte", value=0.20, ctx=ctx) is False
+
+
+def test_clause_unknown_raises() -> None:
+    ctx = _ctx()
+    with pytest.raises(ValueError, match="Unknown rule clause"):
+        evaluate_clause(key="not_a_real_clause", value=0, ctx=ctx)
+
+
+# ----------------------------------------------------------------------
+# Regime whitelist
 # ----------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("action", "expected_strategy"),
+    ("regime", "emit", "expected"),
     [
-        (RecommendedAction.SELL_CALL_AGGRESSIVE, StrategyClass.COVERED_CALL_AGGRESSIVE),
-        (RecommendedAction.SELL_CALL_PARTIAL, StrategyClass.COVERED_CALL_PARTIAL),
-        (RecommendedAction.BUY_PROTECTION, StrategyClass.PROTECTIVE_PUT),
-        (RecommendedAction.REDUCE_COVERAGE, StrategyClass.REDUCE_CALL_COVERAGE),
-        (RecommendedAction.WAIT, StrategyClass.WAIT),
-        (RecommendedAction.MONITOR, StrategyClass.MONITOR),
+        (Regime.HIGH_IV_EVENT, EmittedAction.OPEN_COLLAR, True),
+        (Regime.HIGH_IV_EVENT, EmittedAction.SELL_COVERED_CALL_PARTIAL, True),
+        (Regime.HIGH_IV_EVENT, EmittedAction.MONETIZE_PUT, False),
+        (Regime.LOW_IV_RANGE, EmittedAction.SELL_COVERED_CALL_PARTIAL, True),
+        (Regime.LOW_IV_RANGE, EmittedAction.WHEEL_SHORT_PUT, True),
+        (Regime.LOW_IV_RANGE, EmittedAction.BUY_LONG_DATED_PUT, False),
+        (Regime.LOW_IV_TREND, EmittedAction.BUY_LONG_DATED_PUT, True),
+        (Regime.BREAKOUT, EmittedAction.ROLL_UP_AND_OUT, True),
+        (Regime.BREAKOUT, EmittedAction.MONETIZE_PUT, True),
+        # NO_OP always allowed (fallback)
+        (Regime.HIGH_IV_EVENT, EmittedAction.NO_OP, True),
+        (Regime.LOW_IV_RANGE, EmittedAction.NO_OP, True),
     ],
 )
-def test_base_action_to_strategy_mapping(
-    action: RecommendedAction, expected_strategy: StrategyClass
+def test_regime_whitelist(
+    regime: Regime, emit: EmittedAction, expected: bool
 ) -> None:
-    """In a benign regime (LOW_IV_RANGE) with a default profile, each
-    `RecommendedAction` should map to its natural `StrategyClass`.
-    """
-    rec = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=action),
-        user_profile=_user_profile(),
-    )
-    assert rec.strategy_class is expected_strategy
-    assert rec.action is action
+    assert is_emit_in_regime_whitelist(emit, regime) is expected
 
 
 # ----------------------------------------------------------------------
-# Regime overrides
+# Rule matching (full rule spec)
 # ----------------------------------------------------------------------
 
 
-def test_high_iv_event_downgrades_aggressive_to_partial() -> None:
-    """HIGH_IV_EVENT regime → AGGRESSIVE call sale becomes PARTIAL."""
-    rec = recommend(
-        market_state=_market_state(regime=Regime.HIGH_IV_EVENT, days_to_next_event=3, next_event_kind="earnings"),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(),
+def test_matches_all_clauses_must_pass() -> None:
+    rule = RuleSpec(
+        id="t",
+        when={"regime": "LOW_IV_RANGE", "iv_rank_gte": 50},
+        emit=EmittedAction.SELL_COVERED_CALL_PARTIAL,
+        rationale="(test)",
     )
-    assert rec.strategy_class is StrategyClass.COVERED_CALL_PARTIAL
-    # The rationale should explain the downgrade
-    assert "Event-elevated IV" in rec.rationale
-    assert "adjusted from COVERED_CALL_AGGRESSIVE" in rec.rationale
+    # Both clauses true
+    ctx = _ctx(market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.60))
+    assert matches(rule, ctx) is True
+    # First fails
+    ctx2 = _ctx(market_state=_market_state(regime=Regime.BREAKOUT, iv_rank=0.60))
+    assert matches(rule, ctx2) is False
+    # Second fails
+    ctx3 = _ctx(market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.30))
+    assert matches(rule, ctx3) is False
 
 
-def test_high_iv_pin_forces_wait_on_aggressive() -> None:
-    """HIGH_IV_PIN regime → AGGRESSIVE call sale becomes WAIT."""
+# ----------------------------------------------------------------------
+# Each of the 8 V1 rules fires under the documented conditions
+# ----------------------------------------------------------------------
+
+
+def test_rule_high_iv_sell_call(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """Regime LOW_IV_RANGE + iv_rank=65 + no short call → high_iv_sell_call."""
+    ms = _market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.65)
     rec = recommend(
-        market_state=_market_state(regime=Regime.HIGH_IV_PIN, days_to_nearest_opex=2),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(),
+        market_state=ms,
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
-    assert rec.strategy_class is StrategyClass.WAIT
-    assert "Pin-risk regime" in rec.rationale
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.rule_id == "high_iv_sell_call"
+    assert rec.matched_rule.emit is EmittedAction.SELL_COVERED_CALL_PARTIAL
 
 
-def test_high_iv_pin_forces_wait_on_partial() -> None:
-    """HIGH_IV_PIN regime → PARTIAL call sale also becomes WAIT."""
+def test_rule_roll_up_and_out(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """Short call within 1% + DTE ≤ 14 → roll_up_and_out."""
+    # BREAKOUT allows ROLL_UP_AND_OUT in the regime whitelist
     rec = recommend(
-        market_state=_market_state(regime=Regime.HIGH_IV_PIN),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_PARTIAL),
-        user_profile=_user_profile(),
+        market_state=_market_state(regime=Regime.BREAKOUT, iv_rank=0.55),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(
+            has_short_call=True,
+            nearest_short_call_strike=100.5,  # within 1%
+            nearest_short_call_dte=10,  # ≤ 14
+        ),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
-    assert rec.strategy_class is StrategyClass.WAIT
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.rule_id == "roll_up_and_out_when_short_call_threatened"
+    assert rec.matched_rule.emit is EmittedAction.ROLL_UP_AND_OUT
 
 
-def test_low_iv_trend_downgrades_aggressive() -> None:
+def test_rule_reduce_coverage_breakout(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """BREAKOUT + days_since_event ≤ 2 + IV crush ≤ -15 → reduce_coverage."""
     rec = recommend(
-        market_state=_market_state(regime=Regime.LOW_IV_TREND),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(),
+        market_state=_market_state(
+            regime=Regime.BREAKOUT,
+            days_since_event=1,
+            iv_rank_change_1d=-0.20,
+        ),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
-    assert rec.strategy_class is StrategyClass.COVERED_CALL_PARTIAL
-    assert "Low-IV trend" in rec.rationale
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.rule_id == "reduce_coverage_on_breakout_post_event"
 
 
-def test_breakout_downgrades_aggressive() -> None:
+def test_rule_open_collar(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """HIGH_IV_EVENT + event ≤ 7 days + no long put → open_collar_pre_event."""
+    rec = recommend(
+        market_state=_market_state(
+            regime=Regime.HIGH_IV_EVENT,
+            days_to_next_event=5,
+            next_event_kind="earnings",
+            iv_rank=0.40,  # below high_iv_sell_call threshold of 50
+        ),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
+    )
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.rule_id == "open_collar_pre_event"
+
+
+def test_rule_buy_long_dated_put(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """LOW_IV_TREND + low iv_rank + no long put + low drawdown_tolerance."""
+    rec = recommend(
+        market_state=_market_state(regime=Regime.LOW_IV_TREND, iv_rank=0.25),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(),
+        profile=_user_profile(drawdown_tolerance=0.15),
+        rules=packaged_rules,
+    )
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.rule_id == "buy_long_dated_put_low_iv_trend"
+
+
+def test_rule_monetize_put(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """BREAKOUT + has_long_put + put up 30% → monetize_put."""
     rec = recommend(
         market_state=_market_state(regime=Regime.BREAKOUT),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(has_long_put=True, long_put_pnl_pct=0.35),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
-    assert rec.strategy_class is StrategyClass.COVERED_CALL_PARTIAL
-    assert "Breakout" in rec.rationale
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.rule_id == "monetize_put_on_breakout"
 
 
-def test_post_event_reprice_forces_monitor_on_aggressive() -> None:
+def test_rule_wheel_short_put(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """LOW_IV_RANGE + no short put + style=income → wheel_short_put."""
     rec = recommend(
-        market_state=_market_state(regime=Regime.POST_EVENT_REPRICE),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(),
+        market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.40),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(),
+        profile=_user_profile(style=ProfileStyle.INCOME),
+        rules=packaged_rules,
     )
-    assert rec.strategy_class is StrategyClass.MONITOR
-    assert "Post-event reprice" in rec.rationale
+    assert rec.matched_rule is not None
+    # Note `high_iv_sell_call` requires iv_rank >= 50; we set 0.40 so it skips.
+    assert rec.matched_rule.rule_id == "wheel_on_low_iv_range"
 
 
-def test_low_iv_range_preserves_aggressive() -> None:
-    """LOW_IV_RANGE is the 'clean' regime — no downgrade applied."""
+def test_rule_hold_no_op(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """confidence ≤ 0.30 → hold_no_op."""
     rec = recommend(
-        market_state=_market_state(regime=Regime.LOW_IV_RANGE),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(),
+        market_state=_market_state(
+            regime=Regime.LOW_IV_RANGE, regime_score=0.20, iv_rank=0.30
+        ),
+        flow_score=_flow_score(confidence=0.20),  # low: 0.20 * 0.20 = 0.04
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
-    assert rec.strategy_class is StrategyClass.COVERED_CALL_AGGRESSIVE
-    assert "adjusted from" not in rec.rationale
-
-
-def test_buy_protection_with_collar_preference() -> None:
-    """BUY_PROTECTION + prefer_collars=True → COLLAR (not PROTECTIVE_PUT)."""
-    rec = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=RecommendedAction.BUY_PROTECTION, score=-30.0, bias=Bias.BEARISH),
-        user_profile=_user_profile(prefer_collars=True),
-    )
-    assert rec.strategy_class is StrategyClass.COLLAR
-    assert "Profile prefers collars" in rec.rationale
-
-
-def test_buy_protection_without_collar_preference() -> None:
-    rec = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=RecommendedAction.BUY_PROTECTION, score=-30.0, bias=Bias.BEARISH),
-        user_profile=_user_profile(prefer_collars=False),
-    )
-    assert rec.strategy_class is StrategyClass.PROTECTIVE_PUT
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.rule_id == "hold_no_op"
+    assert rec.matched_rule.emit is EmittedAction.NO_OP
 
 
 # ----------------------------------------------------------------------
-# Profile overrides
+# Rationale rendering
 # ----------------------------------------------------------------------
 
 
-def test_conservative_profile_downgrades_aggressive_to_partial() -> None:
-    """Conservative risk tolerance → AGGRESSIVE → PARTIAL."""
+def test_rationale_substitutes_iv_rank(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    ms = _market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.72)
     rec = recommend(
-        market_state=_market_state(regime=Regime.LOW_IV_RANGE),  # no regime downgrade
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(risk_tolerance=RiskTolerance.CONSERVATIVE),
+        market_state=ms,
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(),
+        profile=_user_profile(min_iv_rank=40),
+        rules=packaged_rules,
     )
-    assert rec.strategy_class is StrategyClass.COVERED_CALL_PARTIAL
-    assert "Conservative profile" in rec.rationale
+    assert rec.matched_rule is not None
+    # Template was `IV rank {{iv_rank}} >= sell threshold {{profile.iv_rank_sell_threshold}}`
+    assert "IV rank 72" in rec.rationale[0]
+    assert "sell threshold 40" in rec.rationale[0]
 
 
-def test_aggressive_profile_preserves_aggressive() -> None:
+def test_rationale_substitutes_confidence(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """hold_no_op rationale has {{confidence}} placeholder.
+
+    To force `hold_no_op`, we need iv_rank < 50 so `high_iv_sell_call`
+    doesn't fire first.
+    """
     rec = recommend(
-        market_state=_market_state(regime=Regime.LOW_IV_RANGE),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(risk_tolerance=RiskTolerance.AGGRESSIVE),
+        market_state=_market_state(
+            regime=Regime.LOW_IV_RANGE, regime_score=0.20, iv_rank=0.30
+        ),
+        flow_score=_flow_score(confidence=0.20),  # 0.20 × 0.20 = 0.04 (< 0.30)
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
-    assert rec.strategy_class is StrategyClass.COVERED_CALL_AGGRESSIVE
-
-
-def test_moderate_profile_preserves_aggressive() -> None:
-    rec = recommend(
-        market_state=_market_state(regime=Regime.LOW_IV_RANGE),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(risk_tolerance=RiskTolerance.MODERATE),
-    )
-    assert rec.strategy_class is StrategyClass.COVERED_CALL_AGGRESSIVE
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.rule_id == "hold_no_op"
+    assert "4%" in rec.rationale[0]  # 0.20 × 0.20 = 0.04 → "4%"
 
 
 # ----------------------------------------------------------------------
-# IV-rank gate
+# Confidence + coverage
 # ----------------------------------------------------------------------
 
 
-def test_iv_rank_gate_vetoes_aggressive() -> None:
-    """IV rank below user threshold → short-premium → MONITOR."""
-    rec = recommend(
-        market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.20),  # 20%
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(min_iv_rank=50),  # threshold 50%
-    )
-    assert rec.strategy_class is StrategyClass.MONITOR
-    assert "IV rank below" in rec.rationale
-
-
-def test_iv_rank_gate_does_not_affect_protective_actions() -> None:
-    """IV rank gate is only for SHORT-premium actions; BUY_PROTECTION is unaffected."""
-    rec = recommend(
-        market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.10),  # very low
-        flow_score=_flow_score(action=RecommendedAction.BUY_PROTECTION, score=-30.0, bias=Bias.BEARISH),
-        user_profile=_user_profile(min_iv_rank=50),
-    )
-    assert rec.strategy_class is StrategyClass.PROTECTIVE_PUT  # unaffected
-
-
-def test_iv_rank_at_threshold_no_gate() -> None:
-    """IV rank exactly equal to threshold → gate does NOT fire (strict less-than)."""
-    rec = recommend(
-        market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.50),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(min_iv_rank=50),
-    )
-    assert rec.strategy_class is StrategyClass.COVERED_CALL_AGGRESSIVE  # preserved
-
-
-# ----------------------------------------------------------------------
-# Confidence composition (V1: flow × regime)
-# ----------------------------------------------------------------------
-
-
-def test_confidence_is_flow_times_regime_score() -> None:
+def test_confidence_is_flow_times_regime(
+    packaged_rules: tuple[RuleSpec, ...],
+) -> None:
     flow = _flow_score(confidence=0.40)
     ms = _market_state(regime_score=0.60)
-    rec = recommend(market_state=ms, flow_score=flow, user_profile=_user_profile())
+    rec = recommend(
+        market_state=ms,
+        flow_score=flow,
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
+    )
     assert rec.confidence == pytest.approx(0.40 * 0.60, abs=1e-12)
 
 
-def test_confidence_clipped_at_one() -> None:
-    """Even with both factors at maximum, confidence stays in [0, 1]."""
-    flow = _flow_score(confidence=1.0)
-    ms = _market_state(regime_score=1.0)
-    rec = recommend(market_state=ms, flow_score=flow, user_profile=_user_profile())
-    assert rec.confidence == 1.0
-    assert rec.confidence <= 1.0
-
-
-def test_confidence_zero_when_either_factor_zero() -> None:
-    flow_zero = _flow_score(confidence=0.0)
-    ms_high = _market_state(regime_score=1.0)
-    rec_a = recommend(market_state=ms_high, flow_score=flow_zero, user_profile=_user_profile())
-    assert rec_a.confidence == 0.0
-
-    flow_high = _flow_score(confidence=1.0)
-    ms_zero = _market_state(regime_score=0.0)
-    rec_b = recommend(market_state=ms_zero, flow_score=flow_high, user_profile=_user_profile())
-    assert rec_b.confidence == 0.0
-
-
-# ----------------------------------------------------------------------
-# Parameters dict
-# ----------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("strategy_action", "expected_keys"),
-    [
-        (RecommendedAction.SELL_CALL_AGGRESSIVE, {"target_dte", "target_delta", "size_pct", "urgency_days"}),
-        (RecommendedAction.SELL_CALL_PARTIAL, {"target_dte", "target_delta", "size_pct", "urgency_days"}),
-        (RecommendedAction.BUY_PROTECTION, {"target_dte", "target_delta", "size_pct", "urgency_days"}),
-        (RecommendedAction.REDUCE_COVERAGE, {"target_dte", "target_delta", "size_pct", "urgency_days"}),
-        (RecommendedAction.WAIT, set()),
-        (RecommendedAction.MONITOR, set()),
-    ],
-)
-def test_parameters_keys_per_strategy(
-    strategy_action: RecommendedAction, expected_keys: set[str]
+def test_coverage_after_sell_covered_call(
+    packaged_rules: tuple[RuleSpec, ...],
 ) -> None:
+    """SELL_COVERED_CALL_PARTIAL adds 0.30 contracts per 100 shares."""
     rec = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=strategy_action),
-        user_profile=_user_profile(),
+        market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.65),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(underlying_shares=100),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
-    assert set(rec.parameters.keys()) == expected_keys
+    # 100 shares → 1 covered-call lot → 0.30 contracts → coverage_after = 30/100 = 0.30
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.emit is EmittedAction.SELL_COVERED_CALL_PARTIAL
+    assert rec.coverage_after == pytest.approx(0.30, abs=1e-9)
 
 
-def test_aggressive_parameters_have_smaller_delta_than_partial() -> None:
-    """AGGRESSIVE = further OTM (smaller delta); PARTIAL = closer to ATM (bigger delta)."""
-    rec_agg = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(),
-    )
-    rec_par = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_PARTIAL),
-        user_profile=_user_profile(),
-    )
-    assert rec_agg.parameters["target_delta"] < rec_par.parameters["target_delta"]
-
-
-def test_aggressive_size_larger_than_partial() -> None:
-    rec_agg = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-        user_profile=_user_profile(),
-    )
-    rec_par = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_PARTIAL),
-        user_profile=_user_profile(),
-    )
-    assert rec_agg.parameters["size_pct"] > rec_par.parameters["size_pct"]
-
-
-def test_protective_put_is_fully_covered() -> None:
+def test_coverage_after_no_shares() -> None:
+    """No underlying shares → coverage_after = 0."""
+    packaged = load_rules_yaml(_PACKAGED_RULES_PATH)
     rec = recommend(
-        market_state=_market_state(),
-        flow_score=_flow_score(action=RecommendedAction.BUY_PROTECTION, score=-30.0, bias=Bias.BEARISH),
-        user_profile=_user_profile(),
+        market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.65),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(underlying_shares=0),
+        profile=_user_profile(),
+        rules=packaged,
     )
-    assert rec.parameters["size_pct"] == 1.0
+    assert rec.coverage_after == 0.0
 
 
 # ----------------------------------------------------------------------
-# Warnings
+# Empty rules validation
 # ----------------------------------------------------------------------
 
 
-def test_warning_low_confidence() -> None:
-    flow = _flow_score(confidence=0.05)  # well below threshold
-    warns = build_warnings(market_state=_market_state(), flow_score=flow, user_profile=_user_profile())
-    assert any("Low confidence" in w for w in warns)
-
-
-def test_warning_low_confidence_threshold_boundary() -> None:
-    """Confidence exactly at threshold does NOT trigger the warning."""
-    flow_at = _flow_score(confidence=LOW_CONFIDENCE_THRESHOLD)
-    warns = build_warnings(market_state=_market_state(), flow_score=flow_at, user_profile=_user_profile())
-    assert not any("Low confidence" in w for w in warns)
-
-
-def test_warning_event_window() -> None:
-    ms = _market_state(days_to_next_event=5, next_event_kind="earnings")
-    warns = build_warnings(market_state=ms, flow_score=_flow_score(), user_profile=_user_profile())
-    assert any("Event window" in w and "earnings" in w for w in warns)
-
-
-def test_warning_event_window_boundary_inclusive() -> None:
-    """`days_to_next_event = 7` (the threshold) should trigger."""
-    ms = _market_state(days_to_next_event=EVENT_WINDOW_DAYS, next_event_kind="fomc")
-    warns = build_warnings(market_state=ms, flow_score=_flow_score(), user_profile=_user_profile())
-    assert any("Event window" in w for w in warns)
-
-
-def test_warning_event_window_beyond_threshold_silent() -> None:
-    ms = _market_state(days_to_next_event=EVENT_WINDOW_DAYS + 1, next_event_kind="earnings")
-    warns = build_warnings(market_state=ms, flow_score=_flow_score(), user_profile=_user_profile())
-    assert not any("Event window" in w for w in warns)
-
-
-def test_warning_opex_proximity() -> None:
-    ms = _market_state(days_to_nearest_opex=2)
-    warns = build_warnings(market_state=ms, flow_score=_flow_score(), user_profile=_user_profile())
-    assert any("Opex proximity" in w for w in warns)
-
-
-def test_warning_opex_threshold_inclusive() -> None:
-    ms = _market_state(days_to_nearest_opex=OPEX_PROXIMITY_DAYS)
-    warns = build_warnings(market_state=ms, flow_score=_flow_score(), user_profile=_user_profile())
-    assert any("Opex proximity" in w for w in warns)
-
-
-def test_warning_opex_negative_silent() -> None:
-    """Past opex (negative) should NOT trigger."""
-    ms = _market_state(days_to_nearest_opex=-1)
-    warns = build_warnings(market_state=ms, flow_score=_flow_score(), user_profile=_user_profile())
-    assert not any("Opex proximity" in w for w in warns)
-
-
-def test_warning_gamma_amplifier() -> None:
-    flow = _flow_score(gamma_sign=-1, gamma_risk=0.8)
-    warns = build_warnings(market_state=_market_state(), flow_score=flow, user_profile=_user_profile())
-    assert any("amplifier" in w for w in warns)
-
-
-def test_warning_gamma_amplifier_silent_when_positive_sign() -> None:
-    """Dealer net LONG gamma — no amplifier warning (they dampen vol)."""
-    flow = _flow_score(gamma_sign=+1, gamma_risk=0.8)
-    warns = build_warnings(market_state=_market_state(), flow_score=flow, user_profile=_user_profile())
-    assert not any("amplifier" in w for w in warns)
-
-
-def test_warning_gamma_amplifier_silent_when_below_magnitude() -> None:
-    flow = _flow_score(gamma_sign=-1, gamma_risk=GAMMA_AMPLIFIER_MAGNITUDE - 0.1)
-    warns = build_warnings(market_state=_market_state(), flow_score=flow, user_profile=_user_profile())
-    assert not any("amplifier" in w for w in warns)
-
-
-def test_warning_borderline_score() -> None:
-    flow = _flow_score(score=10.0, action=RecommendedAction.SELL_CALL_PARTIAL)
-    warns = build_warnings(market_state=_market_state(), flow_score=flow, user_profile=_user_profile())
-    assert any("Borderline" in w for w in warns)
-
-
-def test_warning_borderline_score_band_boundary() -> None:
-    """|score| < BORDERLINE_SCORE_BAND triggers; equals does not."""
-    flow_eq = _flow_score(score=BORDERLINE_SCORE_BAND, action=RecommendedAction.SELL_CALL_PARTIAL)
-    warns_eq = build_warnings(market_state=_market_state(), flow_score=flow_eq, user_profile=_user_profile())
-    assert not any("Borderline" in w for w in warns_eq)
-
-    flow_under = _flow_score(score=BORDERLINE_SCORE_BAND - 0.1, action=RecommendedAction.SELL_CALL_PARTIAL)
-    warns_under = build_warnings(market_state=_market_state(), flow_score=flow_under, user_profile=_user_profile())
-    assert any("Borderline" in w for w in warns_under)
-
-
-def test_warning_iv_rank_below_threshold_only_for_short_premium() -> None:
-    """IV-rank-below warning only fires for SELL_CALL_AGGRESSIVE / SELL_CALL_PARTIAL."""
-    # Sell action → fires
-    flow_sell = _flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE)
-    warns_sell = build_warnings(
-        market_state=_market_state(iv_rank=0.20),
-        flow_score=flow_sell,
-        user_profile=_user_profile(min_iv_rank=50),
-    )
-    assert any("below your short-premium threshold" in w for w in warns_sell)
-
-    # Buy protection → silent
-    flow_buy = _flow_score(action=RecommendedAction.BUY_PROTECTION, score=-30.0, bias=Bias.BEARISH)
-    warns_buy = build_warnings(
-        market_state=_market_state(iv_rank=0.20),
-        flow_score=flow_buy,
-        user_profile=_user_profile(min_iv_rank=50),
-    )
-    assert not any("below your short-premium threshold" in w for w in warns_buy)
-
-
-def test_warnings_empty_on_benign_inputs() -> None:
-    """Healthy chain → no warnings."""
-    rec = recommend(
-        market_state=_market_state(),  # benign defaults
-        flow_score=_flow_score(confidence=0.50, score=46.0, gamma_sign=0),
-        user_profile=_user_profile(min_iv_rank=30),
-    )
-    assert rec.warnings == ()
-
-
-# ----------------------------------------------------------------------
-# Rationale builder direct tests
-# ----------------------------------------------------------------------
-
-
-def test_rationale_includes_all_required_fields() -> None:
-    text = render_rationale(
-        strategy_class=StrategyClass.COVERED_CALL_AGGRESSIVE,
-        market_state=_market_state(regime=Regime.LOW_IV_RANGE, regime_score=0.55),
-        flow_score=_flow_score(score=46.2, bias=Bias.BULLISH, action=RecommendedAction.SELL_CALL_AGGRESSIVE),
-    )
-    assert "Recommended strategy: COVERED_CALL_AGGRESSIVE" in text
-    assert "SELL_CALL_AGGRESSIVE per FlowScore §9.3a" in text
-    assert "Market state: LOW_IV_RANGE" in text
-    assert "regime score 0.55" in text
-    assert "score +46.2" in text
-    assert "bias BULLISH" in text
-
-
-def test_rationale_with_downgrade() -> None:
-    text = render_rationale(
-        strategy_class=StrategyClass.COVERED_CALL_PARTIAL,
-        market_state=_market_state(regime=Regime.HIGH_IV_EVENT),
-        flow_score=_flow_score(action=RecommendedAction.SELL_CALL_AGGRESSIVE, score=46.2),
-        downgrade_reason="Event-elevated IV — gamma/vega risk argues against aggressive premium sale",
-        original_strategy=StrategyClass.COVERED_CALL_AGGRESSIVE,
-    )
-    assert "Event-elevated IV" in text
-    assert "adjusted from COVERED_CALL_AGGRESSIVE" in text
-
-
-def test_rationale_omits_downgrade_when_none() -> None:
-    text = render_rationale(
-        strategy_class=StrategyClass.COVERED_CALL_AGGRESSIVE,
-        market_state=_market_state(),
-        flow_score=_flow_score(),
-    )
-    assert "adjusted from" not in text
+def test_recommend_empty_rules_raises() -> None:
+    with pytest.raises(ValueError, match="rules.*empty"):
+        recommend(
+            market_state=_market_state(),
+            flow_score=_flow_score(),
+            positions=_positions(),
+            profile=_user_profile(),
+            rules=[],
+        )
 
 
 # ----------------------------------------------------------------------
@@ -585,44 +716,73 @@ def test_rationale_omits_downgrade_when_none() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_recommend_returns_full_shape() -> None:
+def test_recommend_returns_shape(packaged_rules: tuple[RuleSpec, ...]) -> None:
     rec = recommend(
         market_state=_market_state(),
         flow_score=_flow_score(),
-        user_profile=_user_profile(),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
-    assert isinstance(rec, Recommendation)
-    assert isinstance(rec.strategy_class, StrategyClass)
-    assert isinstance(rec.action, RecommendedAction)
+    assert isinstance(rec, RecommendationResult)
     assert isinstance(rec.regime, Regime)
     assert 0.0 <= rec.confidence <= 1.0
-    assert isinstance(rec.rationale, str)
-    assert len(rec.rationale) > 0
-    assert isinstance(rec.warnings, tuple)
-    assert isinstance(rec.parameters, dict)
+    assert isinstance(rec.actions, tuple)
 
 
-def test_recommend_is_deterministic() -> None:
-    """Same inputs → byte-equal output (pure function per ADR-0005)."""
-    ms = _market_state()
-    fs = _flow_score()
-    up = _user_profile()
-    rec_a = recommend(market_state=ms, flow_score=fs, user_profile=up)
-    rec_b = recommend(market_state=ms, flow_score=fs, user_profile=up)
-    assert rec_a == rec_b
+def test_recommend_is_deterministic(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    a = recommend(
+        market_state=_market_state(),
+        flow_score=_flow_score(),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
+    )
+    b = recommend(
+        market_state=_market_state(),
+        flow_score=_flow_score(),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
+    )
+    assert a == b
 
 
-def test_recommendation_is_frozen() -> None:
-    """Frozen dataclass — assignment to fields raises FrozenInstanceError."""
+def test_recommendation_result_is_frozen(
+    packaged_rules: tuple[RuleSpec, ...],
+) -> None:
     from dataclasses import FrozenInstanceError
 
     rec = recommend(
         market_state=_market_state(),
         flow_score=_flow_score(),
-        user_profile=_user_profile(),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
     )
     with pytest.raises(FrozenInstanceError):
         rec.confidence = 0.5  # type: ignore[misc]
+
+
+# ----------------------------------------------------------------------
+# select_winning_rule diagnostics
+# ----------------------------------------------------------------------
+
+
+def test_select_winning_rule_records_candidates(
+    packaged_rules: tuple[RuleSpec, ...],
+) -> None:
+    """`candidates_considered` lists rules whose emit passed the whitelist."""
+    rec = recommend(
+        market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.65),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
+    )
+    # LOW_IV_RANGE whitelist allows SELL_COVERED_CALL_PARTIAL + WHEEL_SHORT_PUT + NO_OP
+    # high_iv_sell_call fires first (SELL_COVERED_CALL_PARTIAL emit).
+    assert "high_iv_sell_call" in rec.candidates_considered
 
 
 # ----------------------------------------------------------------------
@@ -633,58 +793,82 @@ def test_recommendation_is_frozen() -> None:
 @given(
     confidence=st.floats(min_value=0.0, max_value=1.0),
     regime_score=st.floats(min_value=0.0, max_value=1.0),
-    score=st.floats(min_value=-100.0, max_value=100.0),
     iv_rank=st.floats(min_value=0.0, max_value=1.0),
 )
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_property_confidence_in_unit_interval(
-    confidence: float, regime_score: float, score: float, iv_rank: float
+@settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_property_confidence_bounded(
+    confidence: float, regime_score: float, iv_rank: float
 ) -> None:
-    """For any valid input, composite confidence is in [0, 1]."""
+    rules = load_rules_yaml(_PACKAGED_RULES_PATH)
     rec = recommend(
         market_state=_market_state(regime_score=regime_score, iv_rank=iv_rank),
-        flow_score=_flow_score(confidence=confidence, score=score),
-        user_profile=_user_profile(),
+        flow_score=_flow_score(confidence=confidence),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=rules,
     )
     assert 0.0 <= rec.confidence <= 1.0
 
 
 @given(
-    action=st.sampled_from(RecommendedAction),
     regime=st.sampled_from(Regime),
-    risk=st.sampled_from(RiskTolerance),
-    prefer_collars=st.booleans(),
-)
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_property_strategy_class_is_valid_enum(
-    action: RecommendedAction,
-    regime: Regime,
-    risk: RiskTolerance,
-    prefer_collars: bool,
-) -> None:
-    """Across the full Cartesian product of inputs, the returned
-    `strategy_class` is always a member of `StrategyClass`.
-    """
-    rec = recommend(
-        market_state=_market_state(regime=regime),
-        flow_score=_flow_score(action=action),
-        user_profile=_user_profile(risk_tolerance=risk, prefer_collars=prefer_collars),
-    )
-    assert rec.strategy_class in set(StrategyClass)
-
-
-@given(
+    iv_rank=st.floats(min_value=0.0, max_value=1.0),
     confidence=st.floats(min_value=0.0, max_value=1.0),
-    regime_score=st.floats(min_value=0.0, max_value=1.0),
 )
 @settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_property_confidence_equals_product(
-    confidence: float, regime_score: float
+def test_property_emit_is_valid_enum(
+    regime: Regime, iv_rank: float, confidence: float
 ) -> None:
-    """Composite confidence is exactly the product of flow + regime confidences."""
+    """Across the input space, every emitted action is a valid enum value."""
+    rules = load_rules_yaml(_PACKAGED_RULES_PATH)
     rec = recommend(
-        market_state=_market_state(regime_score=regime_score),
+        market_state=_market_state(regime=regime, iv_rank=iv_rank),
         flow_score=_flow_score(confidence=confidence),
-        user_profile=_user_profile(),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=rules,
     )
-    assert rec.confidence == pytest.approx(confidence * regime_score, abs=1e-12)
+    for action in rec.actions:
+        assert action.emit in set(EmittedAction)
+    if rec.matched_rule:
+        assert rec.matched_rule.emit in set(EmittedAction)
+
+
+# ----------------------------------------------------------------------
+# select_winning_rule direct API
+# ----------------------------------------------------------------------
+
+
+def test_select_winning_rule_none_when_no_match(
+    packaged_rules: tuple[RuleSpec, ...],
+) -> None:
+    """A LOW_IV_TREND regime with no positions and high confidence has no
+    rule to fire (hold_no_op needs low confidence; buy_long_dated_put
+    needs low IV; etc.). Result: matched=None.
+    """
+    ctx = EvaluationContext(
+        market_state=_market_state(
+            regime=Regime.LOW_IV_TREND, iv_rank=0.70  # too high for buy_long_dated_put
+        ),
+        flow_score=_flow_score(confidence=0.90),  # too high for hold_no_op
+        positions=_positions(),
+        profile=_user_profile(),
+        confidence=0.80,
+    )
+    matched, candidates = select_winning_rule(rules=packaged_rules, ctx=ctx)
+    assert matched is None
+    # NO_OP fallback (hold_no_op) was a candidate; not matched at high confidence.
+    assert "hold_no_op" in candidates
+
+
+def test_matched_rule_carries_score_1(packaged_rules: tuple[RuleSpec, ...]) -> None:
+    """V1 binary scoring: every matched rule has score=1.0."""
+    rec = recommend(
+        market_state=_market_state(regime=Regime.LOW_IV_RANGE, iv_rank=0.65),
+        flow_score=_flow_score(confidence=0.80),
+        positions=_positions(),
+        profile=_user_profile(),
+        rules=packaged_rules,
+    )
+    assert rec.matched_rule is not None
+    assert rec.matched_rule.score == 1.0

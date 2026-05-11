@@ -7,6 +7,10 @@ dependencies = [
     # Pydantic is the only runtime dep at M0.6. Numerical libs (numpy, scipy,
     # py_vollib) land in M1.x when scoring functions need them.
     "pydantic>=2.7",
+    # M1.9: PyYAML loads packages/engine/config/rules.yaml per plan v1.2 §9.5.
+    # The filesystem boundary lives in engine/recommendation/yaml_loader.py;
+    # the core engine is still pure (per ADR-0005).
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]

@@ -19,6 +19,14 @@ export const IncomeNeed = {
   HIGH: "high",
 } as const;
 
+export type ProfileStyle = "income" | "balanced" | "growth";
+
+export const ProfileStyle = {
+  INCOME: "income",
+  BALANCED: "balanced",
+  GROWTH: "growth",
+} as const;
+
 export interface UserStrategyProfile {
   risk_tolerance: RiskTolerance;
   income_need: IncomeNeed;
@@ -26,4 +34,6 @@ export interface UserStrategyProfile {
   max_coverage_pct: number;
   min_iv_rank_for_short_premium: number;
   prefer_collars_over_covered_calls: boolean;
+  drawdown_tolerance?: number;
+  style?: ProfileStyle;
 }

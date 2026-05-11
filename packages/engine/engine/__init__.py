@@ -28,10 +28,16 @@ from engine.greeks import (
     vega,
 )
 from engine.market_state import MarketStateResult, classify
-from engine.profiles import IncomeNeed, RiskTolerance, UserStrategyProfile
+from engine.profiles import IncomeNeed, ProfileStyle, RiskTolerance, UserStrategyProfile
 from engine.recommendation import (
-    Recommendation,
-    StrategyClass,
+    Action,
+    EmittedAction,
+    MatchedRule,
+    PositionState,
+    RecommendationResult,
+    RuleSpec,
+    load_default_rules,
+    load_rules_yaml,
     recommend,
 )
 from engine.regimes import REGIME_COLORS, Regime
@@ -62,8 +68,10 @@ from engine.version import __version__
 __all__ = [
     "EVENT_KIND_WEIGHTS",
     "REGIME_COLORS",
+    "Action",
     "Bias",
     "ChainSnapshot",
+    "EmittedAction",
     "EventKind",
     "EventScoreResult",
     "EventStats",
@@ -74,14 +82,17 @@ __all__ = [
     "IvScoreResult",
     "LegSide",
     "MarketStateResult",
+    "MatchedRule",
     "OiWalls",
     "OptionContract",
     "OptionType",
-    "Recommendation",
+    "PositionState",
+    "ProfileStyle",
+    "RecommendationResult",
     "RecommendedAction",
     "Regime",
     "RiskTolerance",
-    "StrategyClass",
+    "RuleSpec",
     "StrikeLeg",
     "StrikeSelection",
     "StructureScoreResult",
@@ -96,6 +107,8 @@ __all__ = [
     "gamma",
     "gamma_score",
     "iv_score",
+    "load_default_rules",
+    "load_rules_yaml",
     "recommend",
     "rho",
     "select_strikes",

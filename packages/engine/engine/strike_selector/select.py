@@ -45,7 +45,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from engine.greeks import delta
-from engine.recommendation.types import Recommendation, StrategyClass
+from engine.recommendation.types import Action, EmittedAction
 from engine.strike_selector.types import LegSide, StrikeLeg, StrikeSelection
 from engine.types import ChainSnapshot, OptionContract, OptionType
 
@@ -55,35 +55,45 @@ _DTE_MAX_DAYS: int = 365
 
 
 # ----------------------------------------------------------------------
-# Leg structure per strategy class
+# Leg structure per emitted-action code (M1.9: keyed by EmittedAction
+# rather than the M1.8 StrategyClass)
 # ----------------------------------------------------------------------
 #
-# Each strategy expands to one or more (OptionType, LegSide, target_sign)
-# tuples. `target_sign` is +1 for calls and -1 for puts — applied to the
-# `target_delta` from the Recommendation's parameters dict.
+# Each emit code expands to zero or more (OptionType, LegSide, target_sign)
+# tuples. `target_sign` is +1 for calls and -1 for puts — applied to
+# the `target_delta` from the Action's parameters dict.
 
 _LegSpec = tuple[OptionType, LegSide, int]
 
-_LEGS_BY_STRATEGY: dict[StrategyClass, tuple[_LegSpec, ...]] = {
-    StrategyClass.COVERED_CALL_AGGRESSIVE: (
+_LEGS_BY_EMIT: dict[EmittedAction, tuple[_LegSpec, ...]] = {
+    # Short premium — single SHORT call leg.
+    EmittedAction.SELL_COVERED_CALL_PARTIAL: (
         (OptionType.CALL, LegSide.SHORT, +1),
     ),
-    StrategyClass.COVERED_CALL_PARTIAL: (
+    EmittedAction.WHEEL_SHORT_PUT: (
+        # Short put on the wheel. We model it as a SHORT put leg.
+        (OptionType.PUT, LegSide.SHORT, -1),
+    ),
+    # Roll: close existing short call + open new SHORT call. V1 returns
+    # only the new leg; the API layer pairs the close with the original
+    # position from the user's position book.
+    EmittedAction.ROLL_UP_AND_OUT: (
         (OptionType.CALL, LegSide.SHORT, +1),
     ),
-    StrategyClass.PROTECTIVE_PUT: (
+    # Protection: single LONG put leg.
+    EmittedAction.BUY_LONG_DATED_PUT: (
         (OptionType.PUT, LegSide.LONG, -1),
     ),
-    StrategyClass.COLLAR: (
+    # Collar: SHORT call + LONG put (stable order).
+    EmittedAction.OPEN_COLLAR: (
         (OptionType.CALL, LegSide.SHORT, +1),
         (OptionType.PUT, LegSide.LONG, -1),
     ),
-    # REDUCE_CALL_COVERAGE has no new-leg structure in V1 — it requires
-    # the user's existing position to identify which short call to
-    # close. The API layer handles that lookup.
-    StrategyClass.REDUCE_CALL_COVERAGE: (),
-    StrategyClass.WAIT: (),
-    StrategyClass.MONITOR: (),
+    # Close-existing emits: 0 legs in V1; the API layer reads the user's
+    # position book to identify which contract to close.
+    EmittedAction.REDUCE_COVERAGE: (),
+    EmittedAction.MONETIZE_PUT: (),
+    EmittedAction.NO_OP: (),
 }
 
 
@@ -272,17 +282,17 @@ def _select_one_leg(
 
 def select_strikes(
     *,
-    recommendation: Recommendation,
+    action: Action,
     chain_snapshot: ChainSnapshot,
     risk_free_rate: float = 0.05,
     dividend_yield: float = 0.0,
 ) -> StrikeSelection:
-    """V1 Strike Selector entry point.
+    """V1 Strike Selector entry point (M1.9: takes an `Action`).
 
     Args:
-        recommendation: Output from `engine.recommendation.recommend()`.
-            Reads `strategy_class` and `parameters` (`target_dte`,
-            `target_delta`).
+        action: One `Action` from `RecommendationResult.actions`.
+            Reads `emit` (for leg structure) and `parameters`
+            (`target_dte`, `target_delta`).
         chain_snapshot: Frozen option-chain projection. Carries spot,
             as_of, and contracts.
         risk_free_rate: Continuous-compounding risk-free rate. Default
@@ -298,39 +308,39 @@ def select_strikes(
             invalid inputs (empty chain, no eligible contracts) flow
             through as `legs=()` + `skipped_reason`.
 
-    The function is pure (per ADR-0005). For strategy classes that
-    require no concrete legs in V1 (`WAIT`, `MONITOR`,
-    `REDUCE_CALL_COVERAGE`), the result has `legs=()` and a
-    `skipped_reason` documenting why.
+    The function is pure (per ADR-0005). For emit codes that require
+    no concrete new legs in V1 (`REDUCE_COVERAGE`, `MONETIZE_PUT`,
+    `NO_OP`), the result has `legs=()` and a `skipped_reason`
+    documenting why.
     """
     if chain_snapshot.spot <= 0.0:
         raise ValueError(
             f"select_strikes: chain_snapshot.spot must be > 0; got {chain_snapshot.spot}"
         )
 
-    strategy = recommendation.strategy_class
-    leg_specs = _LEGS_BY_STRATEGY[strategy]
+    emit = action.emit
+    leg_specs = _LEGS_BY_EMIT.get(emit, ())
 
     if not leg_specs:
         return StrikeSelection(
-            strategy_class=strategy,
+            emit=emit,
             legs=(),
             skipped_reason=(
-                f"{strategy.value} requires no concrete strike selection "
-                f"(WAIT/MONITOR/REDUCE_CALL_COVERAGE)"
+                f"{emit.value} requires no concrete strike selection "
+                f"(close-existing or NO_OP)"
             ),
         )
 
-    params = recommendation.parameters
+    params = action.parameters
     target_dte = params.get("target_dte")
     target_delta_unsigned = params.get("target_delta")
     if target_dte is None or target_delta_unsigned is None:
         return StrikeSelection(
-            strategy_class=strategy,
+            emit=emit,
             legs=(),
             skipped_reason=(
-                f"Recommendation.parameters missing target_dte or "
-                f"target_delta for {strategy.value}"
+                f"Action.parameters missing target_dte or "
+                f"target_delta for {emit.value}"
             ),
         )
 
@@ -357,14 +367,14 @@ def select_strikes(
         )
         if leg is None:
             return StrikeSelection(
-                strategy_class=strategy,
+                emit=emit,
                 legs=(),
                 skipped_reason=reason,
             )
         selected_legs.append(leg)
 
     return StrikeSelection(
-        strategy_class=strategy,
+        emit=emit,
         legs=tuple(selected_legs),
         skipped_reason=None,
     )

@@ -1,23 +1,25 @@
 """Strike Selector result types.
 
-Per plan v1.2 §9.5 (Strike Selector) and §17 M1.8.
+Per plan v1.2 §9.4 (Strike Selector) and §17 M1.7 / M1.9.
 
-The Strike Selector takes a `Recommendation` + `ChainSnapshot` and picks
-concrete option-leg `OptionContract`s — using BS delta-matching against
-the `Recommendation.parameters.target_delta` and DTE-matching against
-`target_dte`. The output is one or more `StrikeLeg`s wrapped in a
-`StrikeSelection` result.
+The Strike Selector takes an `Action` (from `engine.recommendation`)
++ `ChainSnapshot` and picks concrete option-leg `OptionContract`s —
+using BS delta-matching against `Action.parameters.target_delta` and
+DTE-matching against `target_dte`. The output is zero or more
+`StrikeLeg`s wrapped in a `StrikeSelection` result.
 
-## Leg structure per strategy class
+## Leg structure per emit code (M1.9)
 
-  COVERED_CALL_AGGRESSIVE / PARTIAL  → 1 short call leg
-  PROTECTIVE_PUT                     → 1 long put leg
-  COLLAR                             → 1 short call + 1 long put (2 legs)
-  REDUCE_CALL_COVERAGE               → 0 legs (requires existing position
-                                       context, not in V1 engine scope)
-  WAIT / MONITOR                     → 0 legs
+  SELL_COVERED_CALL_PARTIAL  → 1 SHORT call leg
+  ROLL_UP_AND_OUT            → 1 SHORT call (the new strike)
+  WHEEL_SHORT_PUT            → 1 SHORT put leg
+  BUY_LONG_DATED_PUT         → 1 LONG put leg
+  OPEN_COLLAR                → 1 SHORT call + 1 LONG put (2 legs)
+  REDUCE_COVERAGE            → 0 legs (close existing; API layer)
+  MONETIZE_PUT               → 0 legs (close existing; API layer)
+  NO_OP                      → 0 legs
 
-When no legs are selected (either by strategy class or because no
+When no legs are selected (either by emit code or because no
 contract clears the filters), `legs` is empty and `skipped_reason` is
 non-`None` explaining why.
 
@@ -46,7 +48,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from engine.recommendation.types import StrategyClass
+from engine.recommendation.types import EmittedAction
 from engine.types import OptionContract
 
 
@@ -100,27 +102,26 @@ class StrikeLeg:
 
 @dataclass(frozen=True)
 class StrikeSelection:
-    """The Strike Selector's output for one `Recommendation`.
+    """The Strike Selector's output for one `Action` (M1.9).
 
     Fields:
-        strategy_class:  Echoed from the input `Recommendation` for
-                         downstream traceability.
+        emit:            Echoed `EmittedAction` from the input `Action`
+                         for downstream traceability.
         legs:            Zero or more `StrikeLeg`s. Order is stable:
-                         for `COLLAR`, the first leg is always the
+                         for `OPEN_COLLAR`, the first leg is always the
                          SHORT call, the second is the LONG put.
         skipped_reason:  Human-readable explanation when `legs` is
                          empty. `None` when at least one leg was
                          selected.
 
     The `legs` tuple is empty exactly when:
-      - `strategy_class` is `WAIT`, `MONITOR`, or
-        `REDUCE_CALL_COVERAGE`, OR
+      - `emit` is `REDUCE_COVERAGE`, `MONETIZE_PUT`, or `NO_OP`, OR
       - No contract in the chain cleared the DTE / liquidity / side
         filters for any required leg.
 
     Frozen dataclass per ADR-0005.
     """
 
-    strategy_class: StrategyClass
+    emit: EmittedAction
     legs: tuple[StrikeLeg, ...] = field(default_factory=tuple)
     skipped_reason: str | None = None

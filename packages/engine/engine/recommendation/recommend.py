@@ -1,241 +1,148 @@
-"""Recommendation Engine — V1 `recommend()` orchestrator.
+"""Recommendation Engine — V1 `recommend()` orchestrator (M1.9, plan-true).
 
-Per plan v1.2 §9.4 (Recommendation Engine) and §17 M1.7.
+Per plan v1.2 §9.5 (Recommendation Engine), §22.8 (eight V1 rules),
+and §17 M1.9.
 
 `recommend()` consumes the upstream Market State Engine + Flow Score
-Engine + User Strategy Profile and produces a concrete `Recommendation`:
-strategy class, parameters, composite confidence, rationale, and
-warnings.
+Engine + User Strategy Profile + the user's `PositionState`, and
+applies YAML-driven rules to produce a `RecommendationResult`.
 
-## Decision flow
+## Decision flow (per §9.5)
 
-  1. Map `FlowScore.recommended_action` → base `StrategyClass`.
-  2. Apply regime overrides (some regimes downgrade aggressive plays).
-  3. Apply user-profile overrides (conservative → downgrade;
-     collar-preference → swap PROTECTIVE_PUT for COLLAR).
-  4. Apply min-IV-rank gate for short-premium strategies.
-  5. Compose confidence = `flow_score.confidence × regime_score`.
-  6. Generate downstream parameters (target_dte, target_delta,
-     size_pct, urgency_days).
-  7. Build rationale string.
-  8. Build warnings tuple.
+  1. `REGIME_SPEC[regime].allowed_strategies` → whitelist (handled
+     inline by `engine.recommendation.rules.is_emit_in_regime_whitelist`).
+  2. Iterate `rules` in YAML order. For each rule whose emit is in
+     the whitelist, evaluate `RuleSpec.when` against the context.
+     First match wins (V1; §9.5 step 3 drawdown tie-break is V1.5+).
+  3. Render rationale template + emit `Action`(s) with downstream
+     parameters.
+  4. Compute `coverage_after` from emitted contracts vs underlying
+     shares.
 
-## V1 calibration
+## V1 vs the plan signature
 
-Regime × action → strategy mapping lives in this module as Python
-constants. ADR-0008 plans to move the rules to
-`apps/api/app/config/rules.yaml` in Phase 1.5 so they can be hot-swapped
-without engine version bumps. V1 keeps the rules in-engine for
-simplicity and to anchor the contract.
+Plan §9.5 lists `chain_snapshot: ChainSnapshot` as an input. None of
+the eight V1 rules actually read the chain — all position-related
+clauses are answered by `PositionState`, all market-related clauses
+by `MarketStateResult`. To keep `recommend()` pure under ADR-0005,
+M1.9 drops `chain_snapshot` from the signature. A future rule that
+needs chain-level liquidity / strike-grid context can re-add it.
 
-## Confidence
+Plan §9.5 also lists `rules_yaml: Path` as an input. Reading a YAML
+file is I/O, which would violate ADR-0005. The M1.9 split: the
+filesystem boundary lives in `engine.recommendation.yaml_loader`
+(via `load_rules_yaml(path)` / `load_default_rules()`); `recommend()`
+takes a `Sequence[RuleSpec]` (the parsed result). Callers can use
+the loader once at startup and pass the parsed rules in.
 
-V1 composite confidence is a simple multiplicative blend:
+## V1 ⇒ M1.8 mapping
 
-    composite = flow_score.confidence × regime_score
+The seven `StrategyClass` codes from the M1.8 PR (#36) are subsumed
+by the eight `EmittedAction` codes. The mapping isn't 1-to-1 —
+M1.9's emit codes are richer (e.g. `ROLL_UP_AND_OUT`, `MONETIZE_PUT`,
+`WHEEL_SHORT_PUT` are new). The M1.8 PR's in-engine Python whitelist
+is REPLACED by the YAML rule pipeline. Migration notes live in
+CHANGELOG `[1.0.0]`.
 
-The M1.10 Confidence Composer (per ADR-0003) will replace this with a
-weighted blend across all four scoring primitives + the flow score +
-the regime confidence. Until then, this two-engine blend is the
-conservative V1 baseline.
-
-Pure function (per ADR-0005). No I/O. No DB. No clock. No env.
+Pure function per ADR-0005 — no I/O, no DB, no clock, no env.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from engine._utils import clip01
-from engine.flow_score.types import FlowScore, RecommendedAction
+from engine.flow_score.types import FlowScore
 from engine.market_state.classify import MarketStateResult
-from engine.profiles import RiskTolerance, UserStrategyProfile
-from engine.recommendation.rationale import (
-    DOWNGRADE_REASON_BREAKOUT,
-    DOWNGRADE_REASON_COLLAR_PREFERENCE,
-    DOWNGRADE_REASON_CONSERVATIVE_PROFILE,
-    DOWNGRADE_REASON_HIGH_IV_EVENT,
-    DOWNGRADE_REASON_HIGH_IV_PIN,
-    DOWNGRADE_REASON_IV_RANK_GATE,
-    DOWNGRADE_REASON_LOW_IV_TREND,
-    DOWNGRADE_REASON_POST_EVENT_REPRICE,
-    render_rationale,
+from engine.profiles import UserStrategyProfile
+from engine.recommendation.rationale import render_rationale
+from engine.recommendation.rules import EvaluationContext, select_winning_rule
+from engine.recommendation.types import (
+    Action,
+    EmittedAction,
+    MatchedRule,
+    PositionState,
+    RecommendationResult,
+    RuleSpec,
 )
-from engine.recommendation.types import Recommendation, StrategyClass
-from engine.recommendation.warnings import build_warnings, is_short_premium_action
-from engine.regimes import Regime
+from engine.recommendation.warnings import build_warnings
 
 # ----------------------------------------------------------------------
-# Strategy parameters per class (V1 priors)
+# Emit code → strategy template parameters (V1 priors per §9.5 step 4)
 # ----------------------------------------------------------------------
 #
-# These are forward-looking defaults the M1.8 Strike Selector and M1.11a
-# Collar Builder consume. They are NOT user-facing; the user sees only
-# the strategy class and the rationale.
-#
-# - target_dte:    days to expiry for the new option leg
-# - target_delta:  absolute delta of the new option leg
-# - size_pct:      fraction of the underlying position to act on
-# - urgency_days:  rough days-to-act window (1 = today; 5 = this week;
-#                  21 = this month; 100 = monitor)
+# Each emit maps to forward-looking parameters for the M1.7 Strike
+# Selector and (for COLLAR-style emits) the M1.11a Collar Builder.
+# Stable keys: target_dte, target_delta, size_pct, urgency_days.
 #
 # Phase 4 ML may learn these from realized P&L per ADR-0008.
 
-_PARAMETERS: dict[StrategyClass, dict[str, float]] = {
-    StrategyClass.COVERED_CALL_AGGRESSIVE: {
+_PARAMETERS: dict[EmittedAction, dict[str, float]] = {
+    EmittedAction.SELL_COVERED_CALL_PARTIAL: {
         "target_dte": 30.0,
-        "target_delta": 0.25,  # OTM call
-        "size_pct": 0.50,
-        "urgency_days": 5.0,
-    },
-    StrategyClass.COVERED_CALL_PARTIAL: {
-        "target_dte": 30.0,
-        "target_delta": 0.35,  # closer to ATM
+        "target_delta": 0.35,
         "size_pct": 0.30,
         "urgency_days": 5.0,
     },
-    StrategyClass.PROTECTIVE_PUT: {
-        "target_dte": 60.0,
-        "target_delta": 0.25,  # OTM put
-        "size_pct": 1.00,  # full coverage
-        "urgency_days": 1.0,  # protective decision is urgent
+    EmittedAction.ROLL_UP_AND_OUT: {
+        # Roll the existing short call: close at current strike +
+        # open at higher strike, longer DTE.
+        "target_dte": 45.0,
+        "target_delta": 0.25,
+        "size_pct": 1.00,  # full roll
+        "urgency_days": 1.0,
     },
-    StrategyClass.COLLAR: {
-        "target_dte": 45.0,  # compromise between call + put DTEs
-        "target_delta": 0.25,  # symmetric OTM call + put
+    EmittedAction.REDUCE_COVERAGE: {
+        # Close half of existing short calls; no NEW leg.
+        "target_dte": 0.0,
+        "target_delta": 0.0,
+        "size_pct": 0.50,
+        "urgency_days": 1.0,
+    },
+    EmittedAction.OPEN_COLLAR: {
+        "target_dte": 45.0,
+        "target_delta": 0.25,
         "size_pct": 0.75,
+        "urgency_days": 1.0,
+    },
+    EmittedAction.BUY_LONG_DATED_PUT: {
+        "target_dte": 90.0,
+        "target_delta": 0.20,
+        "size_pct": 1.00,
         "urgency_days": 5.0,
     },
-    StrategyClass.REDUCE_CALL_COVERAGE: {
-        "target_dte": 0.0,  # close existing
+    EmittedAction.MONETIZE_PUT: {
+        # Close the existing long put; no NEW leg.
+        "target_dte": 0.0,
         "target_delta": 0.0,
         "size_pct": 1.00,
         "urgency_days": 1.0,
     },
-    StrategyClass.WAIT: {},
-    StrategyClass.MONITOR: {},
+    EmittedAction.WHEEL_SHORT_PUT: {
+        "target_dte": 30.0,
+        "target_delta": 0.30,
+        "size_pct": 0.50,
+        "urgency_days": 5.0,
+    },
+    EmittedAction.NO_OP: {},
 }
 
 
-# ----------------------------------------------------------------------
-# Regimes that downgrade SELL_CALL_AGGRESSIVE
-# ----------------------------------------------------------------------
-#
-# Per the §9.4 V1 rules:
-#
-#   HIGH_IV_EVENT     → COVERED_CALL_PARTIAL  (event uncertainty)
-#   HIGH_IV_PIN       → WAIT                  (pin distorts directional bets)
-#   LOW_IV_TREND      → COVERED_CALL_PARTIAL  (premium too cheap to aggressive)
-#   BREAKOUT          → COVERED_CALL_PARTIAL  (don't cap upside on breakout)
-#   POST_EVENT_REPRICE → MONITOR              (recent dislocation; observe)
-#   LOW_IV_RANGE      → COVERED_CALL_AGGRESSIVE (clean environment)
+# Emit codes that change coverage by adding a SHORT call leg.
+# Used to compute `coverage_after`.
+_INCREASES_COVERAGE: frozenset[EmittedAction] = frozenset(
+    {EmittedAction.SELL_COVERED_CALL_PARTIAL, EmittedAction.OPEN_COLLAR}
+)
 
-_AGGRESSIVE_DOWNGRADE_MAP: dict[Regime, tuple[StrategyClass, str]] = {
-    Regime.HIGH_IV_EVENT: (StrategyClass.COVERED_CALL_PARTIAL, DOWNGRADE_REASON_HIGH_IV_EVENT),
-    Regime.HIGH_IV_PIN: (StrategyClass.WAIT, DOWNGRADE_REASON_HIGH_IV_PIN),
-    Regime.LOW_IV_TREND: (StrategyClass.COVERED_CALL_PARTIAL, DOWNGRADE_REASON_LOW_IV_TREND),
-    Regime.BREAKOUT: (StrategyClass.COVERED_CALL_PARTIAL, DOWNGRADE_REASON_BREAKOUT),
-    Regime.POST_EVENT_REPRICE: (StrategyClass.MONITOR, DOWNGRADE_REASON_POST_EVENT_REPRICE),
-}
-
-
-# Regimes that downgrade SELL_CALL_PARTIAL — strictly a subset of the
-# aggressive-downgrade rules because the recommendation is already
-# conservative.
-_PARTIAL_DOWNGRADE_MAP: dict[Regime, tuple[StrategyClass, str]] = {
-    Regime.HIGH_IV_PIN: (StrategyClass.WAIT, DOWNGRADE_REASON_HIGH_IV_PIN),
-    Regime.POST_EVENT_REPRICE: (StrategyClass.MONITOR, DOWNGRADE_REASON_POST_EVENT_REPRICE),
-}
+# Emit codes that decrease coverage (close existing short calls).
+_DECREASES_COVERAGE: frozenset[EmittedAction] = frozenset(
+    {EmittedAction.REDUCE_COVERAGE, EmittedAction.MONETIZE_PUT}
+)
 
 
 # ----------------------------------------------------------------------
-# Helpers
+# Composite confidence (V1 two-engine multiplicative blend)
 # ----------------------------------------------------------------------
-
-
-def _base_strategy(
-    *,
-    action: RecommendedAction,
-    user_profile: UserStrategyProfile,
-) -> StrategyClass:
-    """Map `RecommendedAction` to the natural `StrategyClass` (pre-overrides)."""
-    if action is RecommendedAction.SELL_CALL_AGGRESSIVE:
-        return StrategyClass.COVERED_CALL_AGGRESSIVE
-    if action is RecommendedAction.SELL_CALL_PARTIAL:
-        return StrategyClass.COVERED_CALL_PARTIAL
-    if action is RecommendedAction.BUY_PROTECTION:
-        # Collar preference is user-configurable in the profile.
-        if user_profile.prefer_collars_over_covered_calls:
-            return StrategyClass.COLLAR
-        return StrategyClass.PROTECTIVE_PUT
-    if action is RecommendedAction.REDUCE_COVERAGE:
-        return StrategyClass.REDUCE_CALL_COVERAGE
-    if action is RecommendedAction.WAIT:
-        return StrategyClass.WAIT
-    # RecommendedAction.MONITOR — the catch-all
-    return StrategyClass.MONITOR
-
-
-def _apply_regime_override(
-    *,
-    base: StrategyClass,
-    action: RecommendedAction,
-    regime: Regime,
-) -> tuple[StrategyClass, str | None]:
-    """Apply regime-based downgrade rules.
-
-    Returns:
-        (new_strategy, downgrade_reason_or_None).
-    """
-    if action is RecommendedAction.SELL_CALL_AGGRESSIVE:
-        if regime in _AGGRESSIVE_DOWNGRADE_MAP:
-            new_strategy, reason = _AGGRESSIVE_DOWNGRADE_MAP[regime]
-            return new_strategy, reason
-    if action is RecommendedAction.SELL_CALL_PARTIAL:
-        if regime in _PARTIAL_DOWNGRADE_MAP:
-            new_strategy, reason = _PARTIAL_DOWNGRADE_MAP[regime]
-            return new_strategy, reason
-    # BUY_PROTECTION / REDUCE_COVERAGE / WAIT / MONITOR have no
-    # regime-based downgrade in V1.
-    return base, None
-
-
-def _apply_profile_override(
-    *,
-    strategy: StrategyClass,
-    user_profile: UserStrategyProfile,
-) -> tuple[StrategyClass, str | None]:
-    """Apply user-profile downgrade rules.
-
-    V1 rule: CONSERVATIVE risk tolerance + AGGRESSIVE strategy →
-    downgrade to PARTIAL. Other axes are surfaced via the IV-rank gate
-    in `_apply_iv_rank_gate` and the collar preference in `_base_strategy`.
-    """
-    if (
-        user_profile.risk_tolerance is RiskTolerance.CONSERVATIVE
-        and strategy is StrategyClass.COVERED_CALL_AGGRESSIVE
-    ):
-        return StrategyClass.COVERED_CALL_PARTIAL, DOWNGRADE_REASON_CONSERVATIVE_PROFILE
-    return strategy, None
-
-
-def _apply_iv_rank_gate(
-    *,
-    strategy: StrategyClass,
-    action: RecommendedAction,
-    market_state: MarketStateResult,
-    user_profile: UserStrategyProfile,
-) -> tuple[StrategyClass, str | None]:
-    """Veto short-premium strategies when IV rank is below user threshold.
-
-    Note `market_state.iv_rank` is a fraction in `[0, 1]` (0.55 = 55th
-    percentile) while `user_profile.min_iv_rank_for_short_premium` is
-    an integer in `[0, 100]`. We compare on the 0-100 scale.
-    """
-    if (
-        is_short_premium_action(action)
-        and market_state.iv_rank * 100.0 < user_profile.min_iv_rank_for_short_premium
-    ):
-        return StrategyClass.MONITOR, DOWNGRADE_REASON_IV_RANK_GATE
-    return strategy, None
 
 
 def _composite_confidence(
@@ -243,15 +150,66 @@ def _composite_confidence(
     flow_score: FlowScore,
     market_state: MarketStateResult,
 ) -> float:
-    """V1 multiplicative two-engine confidence blend.
+    """V1: `flow_score.confidence × market_state.regime_score`.
 
-    `composite = flow_score.confidence × regime_score`
-
-    Both factors live in `[0, 1]`; the product is in `[0, 1]`. M1.10
-    Composer will replace this with a richer multi-engine blend per
-    ADR-0003.
+    M1.10 Confidence Composer will replace this with the multi-engine
+    blend per ADR-0003.
     """
     return clip01(flow_score.confidence * market_state.regime_score)
+
+
+# ----------------------------------------------------------------------
+# Coverage calculation
+# ----------------------------------------------------------------------
+
+
+def _coverage_after(
+    *,
+    positions: PositionState,
+    matched_rule: MatchedRule | None,
+) -> float:
+    """Estimate the post-action coverage ratio (short calls / 100 shares).
+
+    Each short call covers 100 underlying shares. Per §9.5 step 5,
+    coverage_after = (post-action short_call_contracts × 100) /
+    underlying_shares.
+
+    V1 calibration:
+      - `SELL_COVERED_CALL_PARTIAL`: add `0.30 × (shares / 100)`
+        contracts (matches `size_pct=0.30`).
+      - `OPEN_COLLAR`: add `0.75 × (shares / 100)` short-call
+        contracts (the collar's call leg).
+      - `REDUCE_COVERAGE`: remove half of existing short calls.
+      - `ROLL_UP_AND_OUT`: net zero change in count (close + open).
+      - Other emits: no change in coverage.
+
+    Returns `0.0` when the user has no underlying shares.
+    """
+    if positions.underlying_shares <= 0:
+        return 0.0
+
+    new_contracts = float(positions.short_call_contracts)
+
+    if matched_rule is None:
+        # NO_OP fallback wasn't even matched — no change.
+        post = new_contracts
+    elif matched_rule.emit is EmittedAction.SELL_COVERED_CALL_PARTIAL:
+        new_contracts += 0.30 * (positions.underlying_shares / 100.0)
+        post = new_contracts
+    elif matched_rule.emit is EmittedAction.OPEN_COLLAR:
+        new_contracts += 0.75 * (positions.underlying_shares / 100.0)
+        post = new_contracts
+    elif matched_rule.emit is EmittedAction.REDUCE_COVERAGE:
+        new_contracts *= 0.5
+        post = new_contracts
+    elif matched_rule.emit is EmittedAction.ROLL_UP_AND_OUT:
+        # net zero contract change
+        post = new_contracts
+    else:
+        post = new_contracts
+
+    coverage = (post * 100.0) / float(positions.underlying_shares)
+    return clip01(coverage)
 
 
 # ----------------------------------------------------------------------
@@ -263,108 +221,95 @@ def recommend(
     *,
     market_state: MarketStateResult,
     flow_score: FlowScore,
-    user_profile: UserStrategyProfile,
-) -> Recommendation:
-    """V1 Recommendation Engine `recommend()` per plan §9.4.
+    positions: PositionState,
+    profile: UserStrategyProfile,
+    rules: Sequence[RuleSpec],
+) -> RecommendationResult:
+    """V1 Recommendation Engine `recommend()` per plan §9.5 (M1.9).
 
     Args:
         market_state: Upstream `MarketStateResult` from
             `engine.market_state.classify`.
-        flow_score: Upstream `FlowScore` from
-            `engine.flow_score.compute`.
-        user_profile: User strategy profile (risk tolerance, income
-            need, IV-rank threshold, collar preference).
+        flow_score: Upstream `FlowScore` from `engine.flow_score.compute`.
+        positions: User's current option position state for the
+            underlying (`engine.recommendation.PositionState`). The
+            data layer hydrates this; the engine has no I/O.
+        profile: `UserStrategyProfile`. M1.9 expects the extended
+            v1.0.0 profile with `drawdown_tolerance` + `style` fields.
+        rules: Pre-parsed sequence of `RuleSpec`s. Typically the
+            output of `engine.recommendation.yaml_loader.load_default_rules()`.
 
     Returns:
-        Frozen `Recommendation` with the full V1 contract.
+        `RecommendationResult` per plan §9.5. Carries `actions[]`,
+        the `matched_rule`, `coverage_after`, plus rationale / risks /
+        invalidation / warnings.
 
-    The function is pure (per ADR-0005) — same inputs → byte-identical
-    output.
+    Raises:
+        ValueError: When `rules` is empty. (An empty rule set is
+            almost certainly a configuration error — the no-op
+            fallback lives in the YAML as `hold_no_op` and must be
+            present.)
 
-    Step-by-step:
-      1. Map `flow_score.recommended_action` → natural strategy class.
-      2. Apply regime-based downgrade rules.
-      3. Apply user-profile downgrade rules.
-      4. Apply IV-rank gate (vetoes premium-selling when IV is too low).
-      5. Compute composite confidence (V1: flow × regime).
-      6. Generate parameters dict for downstream Strike Selector /
-         Collar Builder.
-      7. Build rationale + warnings.
-
-    Only the FIRST downgrade reason is surfaced in the rationale. This
-    keeps the explanation focused on the dominant decision rule.
-    Subsequent overrides still apply silently to the strategy class.
+    Pure function (per ADR-0005). Same inputs → byte-identical output.
     """
-    action = flow_score.recommended_action
-    regime = market_state.regime
+    if not rules:
+        raise ValueError(
+            "recommend: `rules` is empty. The `hold_no_op` fallback rule "
+            "must be present in the rule set."
+        )
 
-    # 1. Base strategy from the action enum
-    natural = _base_strategy(action=action, user_profile=user_profile)
-
-    # 2. Regime override
-    after_regime, regime_reason = _apply_regime_override(
-        base=natural, action=action, regime=regime
-    )
-
-    # 3. Profile override (currently the CONSERVATIVE → downgrade rule)
-    after_profile, profile_reason = _apply_profile_override(
-        strategy=after_regime, user_profile=user_profile
-    )
-
-    # 4. IV-rank gate (only fires for short-premium actions)
-    after_gate, gate_reason = _apply_iv_rank_gate(
-        strategy=after_profile,
-        action=action,
-        market_state=market_state,
-        user_profile=user_profile,
-    )
-
-    # The natural-or-collar-swap reason is tracked separately to support
-    # COLLAR preference traceability in the rationale.
-    natural_or_collar_reason: str | None = None
-    if (
-        action is RecommendedAction.BUY_PROTECTION
-        and user_profile.prefer_collars_over_covered_calls
-    ):
-        natural_or_collar_reason = DOWNGRADE_REASON_COLLAR_PREFERENCE
-
-    # First-applied reason wins for the rationale. Order matches the
-    # decision pipeline.
-    downgrade_reason = (
-        regime_reason or profile_reason or gate_reason or natural_or_collar_reason
-    )
-    original_strategy = natural if downgrade_reason else None
-
-    final_strategy = after_gate
-
-    # 5. Composite confidence
     confidence = _composite_confidence(
         flow_score=flow_score, market_state=market_state
     )
 
-    # 6. Parameters
-    parameters = dict(_PARAMETERS[final_strategy])
-
-    # 7. Rationale + warnings
-    rationale = render_rationale(
-        strategy_class=final_strategy,
+    ctx = EvaluationContext(
         market_state=market_state,
         flow_score=flow_score,
-        downgrade_reason=downgrade_reason,
-        original_strategy=original_strategy,
+        positions=positions,
+        profile=profile,
+        confidence=confidence,
     )
+
+    matched, candidates = select_winning_rule(rules=rules, ctx=ctx)
+
+    # Build the actions tuple from the winning rule's emit.
+    if matched is None:
+        actions: tuple[Action, ...] = ()
+        rationale: tuple[str, ...] = ()
+        risks: tuple[str, ...] = ()
+        invalidation: tuple[str, ...] = ()
+    else:
+        params = dict(_PARAMETERS.get(matched.emit, {}))
+        actions = (Action(emit=matched.emit, parameters=params),)
+        rendered = render_rationale(
+            template=matched.rationale,
+            market_state=market_state,
+            flow_score=flow_score,
+            positions=positions,
+            profile=profile,
+            confidence=confidence,
+        )
+        rationale = (rendered,)
+        risks = matched.risks
+        invalidation = matched.invalidation
+
+    coverage = _coverage_after(positions=positions, matched_rule=matched)
+
     warnings = build_warnings(
         market_state=market_state,
         flow_score=flow_score,
-        user_profile=user_profile,
+        user_profile=profile,
     )
 
-    return Recommendation(
-        strategy_class=final_strategy,
-        action=action,
-        regime=regime,
+    return RecommendationResult(
+        actions=actions,
+        matched_rule=matched,
+        regime=market_state.regime,
+        coverage_after=coverage,
         confidence=confidence,
         rationale=rationale,
+        risks=risks,
+        invalidation=invalidation,
         warnings=warnings,
-        parameters=parameters,
+        candidates_considered=candidates,
     )

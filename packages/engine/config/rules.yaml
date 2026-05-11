@@ -1,0 +1,125 @@
+# V1 Recommendation Engine rules.
+#
+# Per plan v1.2 §9.5 (Recommendation Engine — rule pipeline) and
+# §22.8 (eight V1 rules — complete).
+#
+# Each entry has:
+#   id            stable snake_case identifier
+#   when          dict of predicate clauses (all AND together)
+#   emit          one of the eight EmittedAction codes
+#   rationale     templatable string ({{var}} placeholders)
+#   risks         list[str] of risk caveats
+#   invalidation  list[str] of conditions that invalidate the rule
+#
+# The supported `when:` clause keys are documented in
+# `engine.recommendation.rules.supported_clauses()`. Adding a new
+# clause requires adding a clause evaluator there + a unit test.
+#
+# Rule order matters: V1 uses first-match-wins. Place specific rules
+# before general ones.
+#
+# ADR-0008 plans to move this file to `apps/api/app/config/rules.yaml`
+# in Phase 1.5 so it can be hot-swapped without engine version bumps.
+# Until then the engine ships its packaged default here.
+
+- id: high_iv_sell_call
+  when:
+    regime: ["HIGH_IV_EVENT", "HIGH_IV_PIN", "LOW_IV_RANGE"]
+    iv_rank_gte: 50
+    has_short_call: false
+  emit: SELL_COVERED_CALL_PARTIAL
+  rationale: "IV rank {{iv_rank}} >= sell threshold {{profile.iv_rank_sell_threshold}}"
+  risks:
+    - "Capped upside on breakout"
+    - "Assignment risk near expiry"
+  invalidation:
+    - "IV rank < 40"
+    - "Spot breaks resistance with volume"
+
+- id: roll_up_and_out_when_short_call_threatened
+  when:
+    has_short_call_within_pct: 1.0
+    days_to_expiry_lte: 14
+  emit: ROLL_UP_AND_OUT
+  rationale: "Short call within 1% of spot with {{dte}} DTE; roll captures more upside"
+  risks:
+    - "Net debit if rolled at midpoint"
+    - "New strike still ITM on continued rally"
+  invalidation:
+    - "IVR < 30"
+    - "Earnings miss gap-down"
+
+- id: reduce_coverage_on_breakout_post_event
+  when:
+    regime: BREAKOUT
+    days_since_event_lte: 2
+    iv_rank_change_1d_lte: -15
+  emit: REDUCE_COVERAGE
+  rationale: "Post-event IV crush + breakout pattern; preserve upside"
+  risks:
+    - "Trend may stall — forgone premium"
+  invalidation:
+    - "Trend fails — spot returns below resistance"
+
+- id: open_collar_pre_event
+  when:
+    regime: HIGH_IV_EVENT
+    days_to_next_event_lte: 7
+    has_long_put: false
+  emit: OPEN_COLLAR
+  rationale: "{{days_to_next_event}}d to {{event_kind}}; collar protects gap risk"
+  risks:
+    - "Collar caps both sides"
+    - "Net debit if put cost > call premium"
+  invalidation:
+    - "Event passes without expected move"
+    - "IVR drops < 50"
+
+- id: buy_long_dated_put_low_iv_trend
+  when:
+    regime: LOW_IV_TREND
+    iv_rank_lte: 30
+    has_long_put: false
+    drawdown_tolerance_lte: 0.20
+  emit: BUY_LONG_DATED_PUT
+  rationale: "IV rank {{iv_rank}} makes long puts cheap; trending market warrants tail hedge"
+  risks:
+    - "Premium decay if trend continues uninterrupted"
+  invalidation:
+    - "Trend breaks"
+    - "IVR > 50"
+
+- id: monetize_put_on_breakout
+  when:
+    regime: BREAKOUT
+    has_long_put: true
+    put_pnl_pct_gte: 0.30
+  emit: MONETIZE_PUT
+  rationale: "Long put up {{put_pnl_pct}}; harvest gains, re-strike later if needed"
+  risks:
+    - "Trend reverses and we'd be unhedged"
+  invalidation:
+    - "Trend fails immediately"
+
+- id: wheel_on_low_iv_range
+  when:
+    regime: LOW_IV_RANGE
+    has_short_put: false
+    profile_style: "income"
+  emit: WHEEL_SHORT_PUT
+  rationale: "Range market + income profile; sell puts at support"
+  risks:
+    - "Assignment at higher cost basis if range breaks down"
+    - "Naked-put margin"
+  invalidation:
+    - "Regime shifts to LOW_IV_TREND"
+    - "Spot falls below support"
+
+- id: hold_no_op
+  when:
+    confidence_lte: 0.30
+  emit: NO_OP
+  rationale: "Signal alignment too low ({{confidence}}); no high-conviction action"
+  risks: []
+  invalidation:
+    - "Confidence rises above 0.50 on next compute"

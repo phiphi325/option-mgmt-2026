@@ -1,124 +1,118 @@
-"""Rationale builder for the Recommendation Engine.
+"""Rationale rendering for the Recommendation Engine.
 
-Per plan v1.2 §9.4 and §17 M1.7.
+Per plan v1.2 §9.5 and §22.8.
 
-Produces a 2-4 sentence human-readable rationale string explaining the
-recommendation. The string is **stable across patch bumps** — Today
-screen UI snapshot tests, disclosure copy templates, and downstream
-NLP / compliance tooling may anchor on phrases like "Recommended
-strategy:" or "Market state:".
+Each rule's `rationale` template carries `{{var}}` placeholders that
+get substituted with values from the upstream engines + user profile.
+The renderer is intentionally minimal — Mustache-style placeholders
+only, no conditionals or loops. Phase 4 ML may upgrade to a richer
+templater; V1 stays simple and fast.
 
-Three sentences always present:
+Supported placeholders:
 
-  1. "Recommended strategy: {strategy_class} ({action})."
-  2. "Market state: {regime_name} (regime score {regime_score:.2f})."
-  3. "Flow context: score {score:+.1f}, bias {bias}."
+  {{iv_rank}}                       → int 0-100 (from MarketStateResult)
+  {{iv_rank_change_1d}}             → int (pp, signed)
+  {{days_to_next_event}}            → int (days)
+  {{event_kind}}                    → str (e.g. "earnings")
+  {{dte}}                           → int (nearest_short_call_dte)
+  {{put_pnl_pct}}                   → str percentage ("30%")
+  {{confidence}}                    → str percentage ("28%")
+  {{profile.iv_rank_sell_threshold}} → int (from profile.min_iv_rank_for_short_premium)
+  {{profile.drawdown_tolerance}}    → str percentage
 
-One optional fourth sentence when the recommendation was downgraded or
-overridden by the regime/profile mapping:
+Unknown placeholders are LEFT IN the rendered string (with their
+braces) — Phase 1 prefers loud-fail over silent-fill: a missing var
+shows up to QA, not buried in a deployed string.
 
-  4. "{downgrade reason} — strategy adjusted from {original}."
-
-Pure function (per ADR-0005). No I/O.
+Pure function (per ADR-0005).
 """
 
 from __future__ import annotations
 
+import re
+
 from engine.flow_score.types import FlowScore
 from engine.market_state.classify import MarketStateResult
-from engine.recommendation.types import StrategyClass
+from engine.profiles import UserStrategyProfile
+from engine.recommendation.types import PositionState
+
+_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}")
 
 
 def render_rationale(
     *,
-    strategy_class: StrategyClass,
+    template: str,
     market_state: MarketStateResult,
     flow_score: FlowScore,
-    downgrade_reason: str | None = None,
-    original_strategy: StrategyClass | None = None,
+    positions: PositionState,
+    profile: UserStrategyProfile,
+    confidence: float,
 ) -> str:
-    """Build the rationale string for a `Recommendation`.
-
-    Args:
-        strategy_class: The final selected strategy class.
-        market_state: Source `MarketStateResult` (for regime context).
-        flow_score: Source `FlowScore` (for action / score / bias).
-        downgrade_reason: When non-`None`, the regime or profile rule
-            that overrode the natural strategy mapping. Triggers the
-            optional fourth sentence.
-        original_strategy: The strategy class that *would* have been
-            selected if the downgrade rule had not fired. Required when
-            `downgrade_reason` is provided.
-
-    Returns:
-        2-4 sentence space-joined rationale string.
-    """
-    sentences: list[str] = []
-
-    # Sentence 1: strategy + action
-    sentences.append(
-        f"Recommended strategy: {strategy_class.value} "
-        f"({flow_score.recommended_action.value} per FlowScore §9.3a)."
+    """Substitute `{{var}}` placeholders against the supplied context."""
+    values = _build_substitution_map(
+        market_state=market_state,
+        flow_score=flow_score,
+        positions=positions,
+        profile=profile,
+        confidence=confidence,
     )
 
-    # Sentence 2: market state
-    sentences.append(
-        f"Market state: {market_state.regime.value} "
-        f"(regime score {market_state.regime_score:.2f})."
+    def _replace(m: re.Match[str]) -> str:
+        key = m.group(1)
+        if key in values:
+            return values[key]
+        # Unknown placeholder: leave the {{var}} in-line so QA sees it.
+        return m.group(0)
+
+    return _PLACEHOLDER_RE.sub(_replace, template)
+
+
+def _build_substitution_map(
+    *,
+    market_state: MarketStateResult,
+    flow_score: FlowScore,
+    positions: PositionState,
+    profile: UserStrategyProfile,
+    confidence: float,
+) -> dict[str, str]:
+    """Build the placeholder → string map for one rationale rendering."""
+    iv_rank_pct = int(round(market_state.iv_rank * 100.0))
+    iv_rank_change = getattr(market_state, "iv_rank_change_1d", None)
+    iv_rank_change_str = (
+        f"{int(round(iv_rank_change * 100.0)):+d}"
+        if iv_rank_change is not None
+        else "—"
     )
 
-    # Sentence 3: flow context
-    sentences.append(
-        f"Flow context: score {flow_score.score:+.1f}, bias {flow_score.bias.value}."
+    dte_str = (
+        str(positions.nearest_short_call_dte)
+        if positions.nearest_short_call_dte is not None
+        else "—"
     )
 
-    # Sentence 4 (optional): downgrade explanation
-    if downgrade_reason is not None and original_strategy is not None:
-        sentences.append(
-            f"{downgrade_reason} — strategy adjusted from {original_strategy.value}."
-        )
+    days_to_event_str = (
+        str(market_state.days_to_next_event)
+        if market_state.days_to_next_event is not None
+        else "—"
+    )
+    event_kind_str = market_state.next_event_kind or "event"
 
-    return " ".join(sentences)
+    put_pnl_str = f"{int(round(positions.long_put_pnl_pct * 100))}%"
+    confidence_str = f"{int(round(confidence * 100))}%"
 
+    drawdown_str = f"{int(round(profile.drawdown_tolerance * 100))}%"
 
-# Re-export for documentation / introspection. The standard set of
-# downgrade reason strings is shipped here so the orchestrator and tests
-# can reference them by name without typo risk.
-
-DOWNGRADE_REASON_HIGH_IV_EVENT: str = (
-    "Event-elevated IV — gamma/vega risk argues against aggressive premium sale"
-)
-DOWNGRADE_REASON_HIGH_IV_PIN: str = (
-    "Pin-risk regime — directional bets are noisy near max pain"
-)
-DOWNGRADE_REASON_LOW_IV_TREND: str = (
-    "Low-IV trend — premium is cheap; partial coverage better than aggressive"
-)
-DOWNGRADE_REASON_BREAKOUT: str = (
-    "Breakout regime — avoid capping upside with aggressive call sale"
-)
-DOWNGRADE_REASON_POST_EVENT_REPRICE: str = (
-    "Post-event reprice — recent dislocation; monitor before committing"
-)
-DOWNGRADE_REASON_CONSERVATIVE_PROFILE: str = (
-    "Conservative profile — downgrading aggressive sizing"
-)
-DOWNGRADE_REASON_IV_RANK_GATE: str = (
-    "IV rank below profile threshold — premium-selling unattractive"
-)
-DOWNGRADE_REASON_COLLAR_PREFERENCE: str = (
-    "Profile prefers collars — pairing protective put with a call sale"
-)
+    return {
+        "iv_rank": str(iv_rank_pct),
+        "iv_rank_change_1d": iv_rank_change_str,
+        "days_to_next_event": days_to_event_str,
+        "event_kind": event_kind_str,
+        "dte": dte_str,
+        "put_pnl_pct": put_pnl_str,
+        "confidence": confidence_str,
+        "profile.iv_rank_sell_threshold": str(profile.min_iv_rank_for_short_premium),
+        "profile.drawdown_tolerance": drawdown_str,
+    }
 
 
-__all__ = [
-    "DOWNGRADE_REASON_BREAKOUT",
-    "DOWNGRADE_REASON_COLLAR_PREFERENCE",
-    "DOWNGRADE_REASON_CONSERVATIVE_PROFILE",
-    "DOWNGRADE_REASON_HIGH_IV_EVENT",
-    "DOWNGRADE_REASON_HIGH_IV_PIN",
-    "DOWNGRADE_REASON_IV_RANK_GATE",
-    "DOWNGRADE_REASON_LOW_IV_TREND",
-    "DOWNGRADE_REASON_POST_EVENT_REPRICE",
-    "render_rationale",
-]
+__all__ = ["render_rationale"]

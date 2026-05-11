@@ -12,6 +12,164 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [1.0.0] — 2026-05-11
+
+### Milestone correction (retrospective, no code change)
+
+Plan v1.2 §17 sequences M1.7 (Strike Selector, size L) before M1.8 (Recommendation Engine + regime-strategy whitelist, size M) and M1.9 (Recommendation Engine: 8 YAML rules + tests, size M). The earlier PRs labeled these milestones in the swapped order:
+
+- **PR #36** (engine `0.11.0`, branch `feat/m1.7-recommendation-engine`) — was labeled "M1.7" but per §17 the Recommendation Engine is M1.8. Functionality shipped: in-engine Python whitelist with `StrategyClass` enum + `Recommendation` dataclass.
+- **PR #37** (engine `0.12.0`, branch `feat/m1.8-strike-selector`) — was labeled "M1.8" but per §17 the Strike Selector is M1.7. Functionality shipped: BS delta-matching `select_strikes()` keyed by `StrategyClass`.
+
+The functional pieces are correct; only the PR titles + branch names + CHANGELOG headings mis-labeled the milestone number. This `[1.0.0]` entry consolidates the M1.8 retrofit (replacing the Python whitelist with the plan-true `recommend()` signature) AND the M1.9 deliverable (eight YAML rules + tests).
+
+### Breaking (engine — `engine.recommendation`)
+
+This is a **major** version bump per ADR-0005 — the Recommendation Engine contract is replaced, not extended.
+
+- **`recommend()` signature replaced.** New signature (plan-true):
+  ```python
+  def recommend(
+      *,
+      market_state: MarketStateResult,
+      flow_score: FlowScore,
+      positions: PositionState,
+      profile: UserStrategyProfile,
+      rules: Sequence[RuleSpec],
+  ) -> RecommendationResult: ...
+  ```
+  vs the prior PR #36 signature `recommend(*, market_state, flow_score, user_profile)`. Two new required arguments (`positions`, `rules`); `user_profile` renamed to `profile` for plan consistency.
+- **`Recommendation` dataclass replaced by `RecommendationResult`** (richer shape with `actions: tuple[Action, ...]`, `matched_rule`, `coverage_after`, `regime`, `confidence`, `rationale`, `risks`, `invalidation`, `warnings`, `candidates_considered`).
+- **`StrategyClass` enum removed.** Replaced by `EmittedAction` (8 wire-stable codes from plan §22.8: `SELL_COVERED_CALL_PARTIAL`, `ROLL_UP_AND_OUT`, `REDUCE_COVERAGE`, `OPEN_COLLAR`, `BUY_LONG_DATED_PUT`, `MONETIZE_PUT`, `WHEEL_SHORT_PUT`, `NO_OP`).
+- **`engine.strike_selector.select_strikes()` signature changed** to take an `Action` instead of a `Recommendation`. `StrikeSelection.strategy_class` renamed to `StrikeSelection.emit`. The leg-structure dispatch is keyed by `EmittedAction`.
+- **`UserStrategyProfile`** extended with two new fields needed by the §22.8 rule vocabulary:
+  - `drawdown_tolerance: float = 0.15` (referenced by rule 5 `buy_long_dated_put_low_iv_trend` via `drawdown_tolerance_lte`).
+  - `style: ProfileStyle = ProfileStyle.BALANCED` (referenced by rule 7 `wheel_on_low_iv_range` via `profile_style`). `ProfileStyle` is a new StrEnum: `INCOME` / `BALANCED` / `GROWTH`.
+- **`engine.recommendation.types.Recommendation`** and **`StrategyClass`** are no longer exported from `engine` or `engine.recommendation`. Callers must migrate to `RecommendationResult` + `EmittedAction`.
+
+### Added (engine — `engine.recommendation`)
+
+- **`engine.recommendation.recommend()`** — V1 Recommendation Engine orchestrator per plan v1.2 §9.5 (plan-true). Eight-step pipeline:
+  1. Build `EvaluationContext` from upstream engines + composite confidence.
+  2. Iterate `rules` in YAML order, applying the regime whitelist (`is_emit_in_regime_whitelist`).
+  3. First rule whose predicates ALL match wins (V1 binary scoring; §9.5 step 3 drawdown tie-break deferred to V1.5+).
+  4. Map `EmittedAction` → strategy parameters dict (`target_dte`, `target_delta`, `size_pct`, `urgency_days`).
+  5. Render rationale template via `render_rationale()`.
+  6. Compute `coverage_after` from `PositionState.underlying_shares` + emit code.
+  7. Generate warnings (independent of rule pipeline).
+  8. Return `RecommendationResult` with full diagnostics.
+- **`PositionState`** (frozen dataclass) — user's current option positions for the underlying. Eight fields (`underlying_shares`, `has_short_call`, `nearest_short_call_strike`, `nearest_short_call_dte`, `short_call_contracts`, `has_long_put`, `long_put_pnl_pct`, `has_short_put`). All default to "no position" so tests can use a freshly-built profile without explicit position state.
+- **`Action`** (frozen dataclass) — single action emitted by the winning rule. Two fields: `emit: EmittedAction` + `parameters: dict[str, float]`.
+- **`RuleSpec`** (frozen dataclass) — one YAML rule entry. Six fields: `id`, `when`, `emit`, `rationale`, `risks`, `invalidation`.
+- **`MatchedRule`** (frozen dataclass) — the winning rule's metadata. Five fields: `rule_id`, `emit`, `score`, `rationale`, `risks`, `invalidation`.
+- **`EmittedAction`** (StrEnum) — 8 wire-stable codes per plan §22.8.
+- **`evaluate_clause()` / `matches()` / `select_winning_rule()`** — public predicate evaluator + rule selector. 15 supported clause keys (per `supported_clauses()`): `regime`, `iv_rank_gte`, `iv_rank_lte`, `iv_rank_change_1d_lte`, `days_to_next_event_lte`, `days_since_event_lte`, `has_short_call`, `has_short_call_within_pct`, `has_long_put`, `has_short_put`, `days_to_expiry_lte`, `put_pnl_pct_gte`, `drawdown_tolerance_lte`, `profile_style`, `confidence_lte`. Unknown clause keys raise `ValueError` at evaluation time (and at YAML-load time — earlier failure).
+- **`is_emit_in_regime_whitelist()`** — V1 regime → emit code whitelist per plan §9.1 `REGIME_SPEC.allowed_strategies`.
+- **`render_rationale()`** — Mustache-style `{{var}}` placeholder substitution. Supports: `iv_rank`, `iv_rank_change_1d`, `days_to_next_event`, `event_kind`, `dte`, `put_pnl_pct`, `confidence`, `profile.iv_rank_sell_threshold`, `profile.drawdown_tolerance`. Unknown placeholders are LEFT IN with their braces (loud-fail for QA).
+
+### Added (engine — `engine.recommendation.yaml_loader`)
+
+- **`load_rules_yaml(path) -> tuple[RuleSpec, ...]`** — read + parse + validate a `rules.yaml` file. Validates required fields (`id`, `when`, `emit`, `rationale`), the `emit` is a valid `EmittedAction`, and every `when:` clause is in `supported_clauses()`. Schema errors raise `ValueError` with the failing rule id + problem.
+- **`load_default_rules() -> tuple[RuleSpec, ...]`** — load the packaged V1 rules from `packages/engine/config/rules.yaml`.
+
+### Added (packaging — `packages/engine/config/rules.yaml`)
+
+The eight V1 rules per plan §22.8, in YAML order:
+
+1. `high_iv_sell_call` → `SELL_COVERED_CALL_PARTIAL`
+2. `roll_up_and_out_when_short_call_threatened` → `ROLL_UP_AND_OUT`
+3. `reduce_coverage_on_breakout_post_event` → `REDUCE_COVERAGE`
+4. `open_collar_pre_event` → `OPEN_COLLAR`
+5. `buy_long_dated_put_low_iv_trend` → `BUY_LONG_DATED_PUT`
+6. `monetize_put_on_breakout` → `MONETIZE_PUT`
+7. `wheel_on_low_iv_range` → `WHEEL_SHORT_PUT`
+8. `hold_no_op` → `NO_OP` (fallback when composite confidence ≤ 0.30)
+
+ADR-0008 plans to move this file to `apps/api/app/config/rules.yaml` in Phase 1.5 so it can be hot-swapped without engine version bumps. Until then the engine ships its packaged default here.
+
+### Added (engine — `engine.profiles`)
+
+- **`ProfileStyle`** (StrEnum) — `INCOME` / `BALANCED` / `GROWTH`. Drives the `profile_style` rule predicate.
+- **`UserStrategyProfile.drawdown_tolerance: float = 0.15`** — fraction of portfolio the user is willing to lose. Drives `drawdown_tolerance_lte` rule predicate. Default matches plan §2 personas.
+- **`UserStrategyProfile.style: ProfileStyle = ProfileStyle.BALANCED`** — overall portfolio style. Default is the safest fallback.
+
+### Added (dependencies)
+
+- **PyYAML** (`pyyaml>=6.0`) added as an engine **runtime** dependency for `engine.recommendation.yaml_loader`. The filesystem boundary is confined to `yaml_loader.py`; the core `recommend()` is still pure per ADR-0005 (it takes a pre-parsed `Sequence[RuleSpec]`, not a `Path`).
+
+### Plan deviation note (chain_snapshot)
+
+Plan §9.5 lists `chain_snapshot: ChainSnapshot` as a `recommend()` input. None of the eight V1 rules read the chain (all position-related clauses are answered by `PositionState`, all market-related clauses by `MarketStateResult`). To preserve ADR-0005 purity, M1.9 drops `chain_snapshot` from the `recommend()` signature. A future rule that needs chain-level liquidity / strike-grid context can re-add it.
+
+### Tests
+
+162 total tests pass. **96-100% line coverage** on all M1.9 modules:
+
+- **67 new tests** in `packages/engine/tests/test_recommendation.py`:
+  - 8 YAML loader tests (count, IDs, emits, file-not-found, empty YAML, non-list, missing required field, bad emit, unsupported clause, when-not-mapping, risks-not-list).
+  - 23 clause-evaluator tests (one per clause key × happy-path + None / negative cases).
+  - 11 regime whitelist parametrized tests.
+  - 1 matches() AND-semantics test.
+  - 8 individual-rule firing tests (one per V1 rule).
+  - 2 rationale-rendering tests (iv_rank substitution, confidence substitution).
+  - 3 confidence + coverage tests.
+  - 1 empty-rules validation test.
+  - 3 shape + determinism + frozen tests.
+  - 1 candidates-considered diagnostic test.
+  - 2 select_winning_rule direct-API tests.
+  - 2 Hypothesis property tests (50 examples each) — bounded confidence, valid `EmittedAction` enum.
+- **38 refactored tests** in `packages/engine/tests/test_strike_selector.py` updated for the M1.9 `Action`-based contract.
+- **57 preserved tests** in `packages/engine/tests/test_flow_score_compute.py` (M1.5b — no change needed).
+
+### Migration guide
+
+Callers of the prior `recommend()` (PR #36 contract) must update:
+
+```python
+# Before (engine 0.11.0 / 0.12.0)
+from engine import recommend, Recommendation, StrategyClass
+rec = recommend(
+    market_state=ms, flow_score=fs, user_profile=profile,
+)
+print(rec.strategy_class, rec.action)
+
+# After (engine 1.0.0)
+from engine import (
+    recommend, RecommendationResult, EmittedAction,
+    PositionState, load_default_rules,
+)
+rules = load_default_rules()
+positions = PositionState(underlying_shares=100)  # hydrated by API layer
+rec = recommend(
+    market_state=ms, flow_score=fs,
+    positions=positions, profile=profile, rules=rules,
+)
+for action in rec.actions:
+    print(action.emit, action.parameters)
+print(rec.matched_rule.rule_id if rec.matched_rule else "no rule fired")
+```
+
+Callers of `select_strikes()` (PR #37 contract):
+
+```python
+# Before
+sel = select_strikes(recommendation=rec, chain_snapshot=chain)
+print(sel.strategy_class, [leg.contract.strike for leg in sel.legs])
+
+# After
+for action in rec.actions:
+    sel = select_strikes(action=action, chain_snapshot=chain)
+    print(sel.emit, [leg.contract.strike for leg in sel.legs])
+```
+
+### Plan refs
+
+v1.2 §9.5 (Recommendation Engine — rule pipeline), §22.8 (eight V1 rules complete), §9.1 (`REGIME_SPEC.allowed_strategies`), §17 M1.8 + M1.9 (size M acceptance), §11 (User Strategy Profile), ADR-0005 (pure-function discipline + SemVer), ADR-0008 (Phase 1.5 rules.yaml hot-swap; Phase 4 ML node-swap).
+
+PR: [#38](https://github.com/csupenn/option-mgmt-2026/pull/38)
+
+---
+
 ## [0.12.0] — 2026-05-11
 
 ### Added (engine — `engine.strike_selector`)

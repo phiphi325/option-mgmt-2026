@@ -173,6 +173,8 @@ def _render_profiles() -> str:
             "\n",
             _emit_str_enum(profiles.IncomeNeed),
             "\n",
+            _emit_str_enum(profiles.ProfileStyle),
+            "\n",
             _emit_model(profiles.UserStrategyProfile),
         ]
     )

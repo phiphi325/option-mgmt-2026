@@ -1,119 +1,177 @@
-"""Recommendation Engine result types.
+"""Recommendation Engine V1 contract types.
 
-Per plan v1.2 §9.4 (Recommendation Engine) and §17 M1.7.
+Per plan v1.2 §9.5 (Recommendation Engine) and §17 M1.8/M1.9.
 
-`Recommendation` is the engine's output — a concrete strategy selection
-plus the parameters the M1.8 Strike Selector and M1.11a Collar Builder
-need to render an actionable trade.
+M1.9 ships the plan-true contract with YAML-driven rules. Replaces the
+simpler `Recommendation` / `StrategyClass` types shipped in the prior
+M1.8 PR (#36) — see CHANGELOG `[1.0.0]` for the migration notes.
 
-The Recommendation Engine is the **decision layer** that sits between
-the Flow Score Engine's `recommended_action` (a 6-value enum from
-§9.3a) and the actual trade construction in M1.8 / M1.11a:
+Pipeline (per plan §9.5):
 
-  Market State Engine ─┐
-                       ├─► Recommendation Engine ─► Recommendation ─► Strike Selector / Collar Builder
-  Flow Score Engine ───┤                                                  (M1.8 / M1.11a)
-  User Profile ────────┘
+  1. `REGIME_SPEC[regime].allowed_strategies` → whitelist.
+  2. Score each rule from `rules_yaml` against the upstream state +
+     position state + user profile.
+  3. Top-scoring rule wins (first-match-wins in V1; the §9.5
+     drawdown-impact tie-break lands in V1.5+).
+  4. Generate `actions[]` by parameterizing the strategy template.
+  5. Compute `coverage_after` based on emitted short-call contracts.
 
-The split exists because:
-
-1. **Regime overrides flow.** A bullish FlowScore (action=SELL_CALL_AGGRESSIVE)
-   in a HIGH_IV_PIN regime should NOT actually trigger aggressive call
-   selling — the pin distorts the math. The Recommendation Engine applies
-   this regime-aware whitelisting.
-2. **User profile filters.** Conservative users see fewer aggressive
-   strategies, even on the same engine signal. The Strike Selector
-   doesn't have the profile context.
-3. **Parameters belong downstream.** The Strike Selector needs
-   target_dte / target_delta / size_pct — choices that depend on the
-   recommendation, not the raw engine signal.
-
-Phase 1.5 ADR-0008 plans to move the regime × action → strategy mapping
-into an external `apps/api/app/config/rules.yaml` file so the rules can
-be hot-swapped without engine version bumps. M1.7 ships the V1 rules as
-in-engine constants and switch logic.
+Frozen dataclasses per [ADR-0005](../decisions/0005-engine-pure-function-discipline.md).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
-from engine.flow_score.types import RecommendedAction
 from engine.regimes import Regime
 
 
-class StrategyClass(StrEnum):
-    """The concrete strategy the Recommendation Engine selects.
+class EmittedAction(StrEnum):
+    """The eight V1 action codes per plan §22.8 `rules.yaml`.
 
-    Six values that map roughly to the §9.3a `RecommendedAction` enum
-    but at a level the M1.8 Strike Selector and M1.11a Collar Builder
-    can directly consume. The expansion vs the action enum:
+    Each YAML rule emits exactly one of these. The mapping to a
+    concrete `StrategyClass` + Strike Selector parameters is done by
+    `recommend()` after rule evaluation.
 
-      - `RecommendedAction.SELL_CALL_AGGRESSIVE` →
-        `COVERED_CALL_AGGRESSIVE` (low-delta OTM call, larger size).
-      - `RecommendedAction.SELL_CALL_PARTIAL` →
-        `COVERED_CALL_PARTIAL` (closer-to-ATM call, smaller size).
-      - `RecommendedAction.BUY_PROTECTION` →
-        `PROTECTIVE_PUT` (lone OTM put) OR `COLLAR` (call+put combo)
-        depending on `UserStrategyProfile.prefer_collars_over_covered_calls`.
-      - `RecommendedAction.REDUCE_COVERAGE` →
-        `REDUCE_CALL_COVERAGE` (close existing short calls).
-      - `RecommendedAction.WAIT` → `WAIT`.
-      - `RecommendedAction.MONITOR` → `MONITOR`.
-
-    Regime overrides can downgrade any of these (e.g.
-    `COVERED_CALL_AGGRESSIVE` → `COVERED_CALL_PARTIAL` in `HIGH_IV_EVENT`).
-
-    The string values are wire-stable — they flow through to Postgres
-    and the TypeScript UI types. Adding new values requires coordinated
-    changes across all three layers.
+    Wire-stable values — flow through to Postgres + TypeScript codegen.
     """
 
-    COVERED_CALL_AGGRESSIVE = "COVERED_CALL_AGGRESSIVE"
-    COVERED_CALL_PARTIAL = "COVERED_CALL_PARTIAL"
-    PROTECTIVE_PUT = "PROTECTIVE_PUT"
-    COLLAR = "COLLAR"
-    REDUCE_CALL_COVERAGE = "REDUCE_CALL_COVERAGE"
-    WAIT = "WAIT"
-    MONITOR = "MONITOR"
+    SELL_COVERED_CALL_PARTIAL = "SELL_COVERED_CALL_PARTIAL"
+    ROLL_UP_AND_OUT = "ROLL_UP_AND_OUT"
+    REDUCE_COVERAGE = "REDUCE_COVERAGE"
+    OPEN_COLLAR = "OPEN_COLLAR"
+    BUY_LONG_DATED_PUT = "BUY_LONG_DATED_PUT"
+    MONETIZE_PUT = "MONETIZE_PUT"
+    WHEEL_SHORT_PUT = "WHEEL_SHORT_PUT"
+    NO_OP = "NO_OP"
 
 
 @dataclass(frozen=True)
-class Recommendation:
-    """The Recommendation Engine output (V1 per §9.4).
+class PositionState:
+    """User's current option positions for the underlying.
 
-    Fields:
-        strategy_class:  Selected `StrategyClass` after regime + profile
-                         overrides applied.
-        action:          The original `RecommendedAction` from the
-                         `FlowScore` (echoed for downstream traceability).
-        regime:          The `Regime` from `MarketStateResult` (echoed
-                         for traceability).
-        confidence:      Composite confidence in `[0, 1]`. V1 formula:
-                         `flow_score.confidence × regime_score`. The full
-                         M1.10 Confidence Composer will replace this with
-                         a richer multi-engine blend (per ADR-0003).
-        rationale:       Human-readable 2-4 sentence summary.
-        warnings:        Tuple of caveat strings. Empty when the
-                         recommendation is uncomplicated.
-        parameters:      Forward-looking parameters dict for downstream
-                         consumers (Strike Selector, Collar Builder).
-                         Stable keys: `target_dte`, `target_delta`,
-                         `size_pct`, `urgency_days`. Values are floats.
-                         Empty for `WAIT` / `MONITOR` strategies.
+    Used by the Recommendation Engine to evaluate position-dependent
+    rule predicates: `has_short_call`, `has_short_call_within_pct`,
+    `has_long_put`, `has_short_put`, `days_to_expiry_lte` (on the
+    nearest short call), `put_pnl_pct_gte` (on the long put).
 
-    All numeric fields are bounded as documented. Frozen dataclass per
-    [ADR-0005](../decisions/0005-engine-pure-function-discipline.md);
-    consumers MUST NOT mutate `warnings` or `parameters` (Python frozen
-    dataclasses freeze attribute assignment, not deep-mutation of the
-    contained collections — same convention as `FlowScore.breakdown`).
+    The data layer hydrates this from the user's brokerage / position
+    book before calling the engine — the engine itself has no I/O.
+
+    All fields default to "no position" so a freshly-built profile can
+    be used in tests without explicit position state.
     """
 
-    strategy_class: StrategyClass
-    action: RecommendedAction
-    regime: Regime
-    confidence: float
-    rationale: str
-    warnings: tuple[str, ...] = field(default_factory=tuple)
+    underlying_shares: int = 0
+    has_short_call: bool = False
+    nearest_short_call_strike: float | None = None
+    nearest_short_call_dte: int | None = None
+    short_call_contracts: int = 0
+    has_long_put: bool = False
+    long_put_pnl_pct: float = 0.0
+    has_short_put: bool = False
+
+
+@dataclass(frozen=True)
+class Action:
+    """A single action emitted by the winning rule.
+
+    Carries the action code + the forward-looking parameters the M1.7
+    Strike Selector (and M1.13 Master Decision Engine) consume to
+    pick concrete strikes. `parameters` keys are stable:
+
+      target_dte:    target days to expiry for the new option leg
+      target_delta:  target absolute delta of the new option leg
+      size_pct:      fraction of position to act on
+      urgency_days:  rough days-to-act window
+    """
+
+    emit: EmittedAction
     parameters: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RuleSpec:
+    """One YAML rule entry loaded from `rules.yaml`.
+
+    Fields mirror the §22.8 YAML schema:
+
+      id:           Stable identifier (snake_case).
+      when:         The `when:` clause dict — opaque to the type;
+                    interpreted by the rule evaluator.
+      emit:         The `EmittedAction` enum value.
+      rationale:    Templatable string ({{var}} placeholders).
+      risks:        Tuple of risk caveats.
+      invalidation: Tuple of conditions that invalidate the rule.
+
+    Frozen for immutability + hashability.
+    """
+
+    id: str
+    when: dict[str, Any]
+    emit: EmittedAction
+    rationale: str
+    risks: tuple[str, ...] = ()
+    invalidation: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class MatchedRule:
+    """A rule whose predicates fired, with the rendered rationale.
+
+    `score` is the V1 binary 1.0 for any matching rule; V1.5+ will
+    introduce continuous scoring per §9.5 step 3 (drawdown tie-break).
+    """
+
+    rule_id: str
+    emit: EmittedAction
+    score: float
+    rationale: str
+    risks: tuple[str, ...]
+    invalidation: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RecommendationResult:
+    """V1 Recommendation Engine output per plan §9.5.
+
+    Fields:
+        actions:               Tuple of `Action`s emitted by the
+                               winning rule. For most rules a single
+                               action; `OPEN_COLLAR` may emit two
+                               (short call + long put).
+        matched_rule:          The winning `MatchedRule`. `None` when
+                               no rule matched and the `hold_no_op`
+                               fallback fired.
+        regime:                Echoed `Regime` for traceability.
+        coverage_after:        Estimated coverage ratio after the
+                               emitted actions apply. In `[0, 1]`.
+                               `0.0` when no underlying shares.
+        confidence:            Echoed composite confidence from
+                               upstream (V1 = `flow × regime`).
+        rationale:             Per-action rationale strings rendered
+                               from the matched rule's template.
+        risks:                 Echoed risks from the matched rule.
+        invalidation:          Echoed invalidation conditions.
+        warnings:              Tuple of caveat strings (low confidence,
+                               event proximity, etc.) — generated
+                               independently of the rule pipeline.
+        candidates_considered: Rule IDs that passed the regime
+                               whitelist (i.e. rule.emit was in
+                               `REGIME_SPEC[regime].allowed_strategies`).
+
+    Frozen dataclass per ADR-0005.
+    """
+
+    actions: tuple[Action, ...]
+    matched_rule: MatchedRule | None
+    regime: Regime
+    coverage_after: float
+    confidence: float
+    rationale: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    invalidation: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    candidates_considered: tuple[str, ...] = ()
