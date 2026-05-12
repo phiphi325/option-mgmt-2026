@@ -12,6 +12,93 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [1.4.0] — 2026-05-12
+
+### Added (engine — `engine.decision`, M1.13 Master Decision Engine)
+
+- **`engine.decision.produce_daily_decision(...)`** — M1.13 orchestrator per plan v1.2 §9.6 + §17 M1.13. Pure function (per ADR-0005) that wires every prior engine together and returns a single `DailyDecision`:
+  ```
+  classify()       → MarketStateResult     [M1.4]   (caller-provided)
+  compute()        → FlowScore             [M1.5b]  (caller-provided)
+  recommend()      → RecommendationResult  [M1.9]
+  select_strikes() → StrikeSelection       [M1.7]
+  downgrade_if_…() → DowngradeResult       [M1.12]
+  compose()        → final confidence      [M1.10]
+  ```
+  Single-pass design with a deliberate two-stage `compose()`: the tentative `recommend()` runs with `illiquidity_penalty=0` so the rule pipeline can select using its `confidence_lte:` clause; after per-action `downgrade_if_needed()` produces real fill data, `compose()` re-runs with the aggregate post-downgrade penalty to produce the FINAL `confidence` stamped on `DailyDecision` (differs from `recommendation.confidence` whenever fill < 1.0).
+- **`engine.decision.DailyDecision`** — the §7 contract type as a frozen dataclass with all 20 fields:
+  - Identity: `decision_id`, `as_of`, `ticker`, `spot`
+  - Upstream echoes: `user_profile_snapshot`, `market_state`, `flow_score`, `recommendation`
+  - Per-action: `strike_selections`, `downgrades`, `executions` (parallel tuples zipping with `recommendation.actions`)
+  - Final scoring: `confidence`, `confidence_breakdown` (post-downgrade)
+  - Replay pins: `inputs_hash`, `engine_version`, `weights_version`
+  - Metadata: `data_freshness`, `disclaimers`, `escalated`
+- **`engine.decision.compute_inputs_hash(...)`** — SHA-256 over canonical JSON of all engine inputs. Returns `"sha256:" + 64-char-hex` (71 chars). Handles every Python type the engine produces (frozen dataclasses, Pydantic models, dates, datetimes, enums, frozensets, tuples). Naive datetimes are treated as UTC for cross-environment determinism.
+- **`engine.decision.DEFAULT_DISCLAIMERS`** — `Final[tuple[str, ...]]` of the three canonical engine disclaimers per plan §15. The API layer may augment for broker-specific text.
+
+### Pipeline behavior
+
+| Scenario | `recommendation.actions` | `executions` | `escalated` | `confidence` vs. `recommendation.confidence` |
+|---|---|---|---|---|
+| Healthy chain, rule fires | 1+ actions | populated | False | ≤ (small post-downgrade penalty drop) |
+| Illiquid chain, ladder rescues | 1+ actions | populated | False | < (penalty applied) |
+| Illiquid chain, ladder exhausted | 1+ actions | populated | **True** | < (max penalty applied) |
+| No rule fires / `hold_no_op` with no legs | 0 actions or NO_OP | trivial (1.0 fill) | False | == (no penalty) |
+| `decision_id` for identical inputs | — | — | — | **identical** (deterministic) |
+
+### Why M1.13 takes `market_state` + `flow_score` rather than calling `classify()` + `compute()` internally
+
+`classify()` has 18 inputs (per §22.3) that the API layer in `apps/api` is already hydrating from Postgres. Threading 20+ arguments through the Master Decision Engine adds nothing the API doesn't already track. The API layer composes upstream engines; M1.13 stitches their results together.
+
+### Replay safety
+
+`(engine_version, weights_version, inputs_hash)` — three pins on every `DailyDecision`. Same triple → byte-identical output. The decision_id is derived from `inputs_hash[:12] + as_of.timestamp()` so identical inputs at the same timestamp produce identical IDs (idempotent persistence via `INSERT ... ON CONFLICT (user_id, inputs_hash) DO RETURNING` per plan §7 idempotency notes).
+
+### Tests
+
+- 40 new tests in `tests/test_decision.py`; **100% line coverage** on `engine.decision` (114 statements, 0 missed across `__init__.py`, `hashing.py`, `produce.py`, `types.py`).
+- Pipeline integration: healthy-chain, illiquid-chain, ladder-exhausted, NO_OP / no-action paths.
+- Per-action wiring: `strike_selections == [dr.final_selection for dr in downgrades]` and `executions == [dr.final_execution for dr in downgrades]`.
+- Final confidence vs. tentative: post-downgrade `< tentative` when chain is illiquid; ≈ tentative (within `5e-3` epsilon) for near-perfect chains.
+- Final breakdown's `illiquidity_penalty` matches `max(liquidity_penalty(ex) for ex in executions)` exactly.
+- Escalation propagation: `DailyDecision.escalated` = `any(dr.escalated for dr in downgrades)`.
+- Determinism: same inputs → byte-identical `DailyDecision`; mutation raises `FrozenInstanceError`.
+- Custom-weights override propagates `weights_version` through to both `decision.weights_version` and `confidence_breakdown.weights_version`.
+- `compute_inputs_hash`: format (`sha256:` prefix + 64 hex chars); determinism; sensitivity to ticker / spot / positions / profile; naive-datetime UTC normalization; aware-datetime passthrough; canonical handling of every input type (primitives, date, datetime, Enum, BaseModel, dataclass, dict, list, tuple, frozenset, fallback).
+- `data_freshness` / `disclaimers` passthrough verified.
+- Total engine tests: **327 → 367** (+40).
+
+### Migration
+
+No breaking changes to any prior surface. New callers:
+
+```python
+from engine.decision import produce_daily_decision
+
+decision = produce_daily_decision(
+    as_of=datetime.now(),
+    ticker="MSFT",
+    chain_snapshot=chain,
+    positions=positions,
+    profile=profile,
+    market_state=ms,        # from engine.market_state.classify(...)
+    flow_score=fs,          # from engine.flow_score.compute(...)
+)
+# decision.inputs_hash → use for idempotency check before persisting
+# decision.confidence → post-downgrade
+# decision.escalated → True iff any per-action ladder ran out of options
+```
+
+The M1.14 `/engine/daily-plan` endpoint will call this function once per request and persist the result to the `daily_decisions` table.
+
+### Plan deviation
+
+Plan §9.6 pseudocode calls `compose()` once with `liquidity_penalty(exe)`. M1.13 follows the spirit of that flow but runs `compose()` twice — once internally to `recommend()` (with penalty=0 so the rule pipeline can use `confidence_lte`), then again externally with the real penalty to produce the final `confidence`. The `recommendation.confidence` field stays in the payload for UI drill-down ("what the rule pipeline saw before execution feedback") and `decision.confidence` is the user-facing number.
+
+The plan also describes `select_strikes()` being called *before* `recommend()` (in §9.6 step 3). M1.13 calls them in the opposite order: `recommend()` first to determine the action / leg structure, then `select_strikes()` per action via `downgrade_if_needed()`. This matches the M1.9 plan-true `recommend()` signature shipped in `[1.0.0]` — the rule pipeline emits the `EmittedAction` codes that drive leg structure, so strike selection must follow.
+
+---
+
 ## [1.3.0] — 2026-05-12
 
 ### Added (engine — `engine.execution.downgrade`, M1.12 callback)

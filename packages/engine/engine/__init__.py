@@ -23,6 +23,12 @@ from engine.confidence import (
     load_default_weights,
     load_weights_yaml,
 )
+from engine.decision import (
+    DEFAULT_DISCLAIMERS,
+    DailyDecision,
+    compute_inputs_hash,
+    produce_daily_decision,
+)
 from engine.execution import (
     DOWNGRADE_THRESHOLD,
     DowngradeResult,
@@ -89,8 +95,10 @@ from engine.types import ChainSnapshot, OptionContract, OptionType
 from engine.version import __version__
 
 __all__ = [
+    "DEFAULT_DISCLAIMERS",
     "DEFAULT_WEIGHTS",
     "DOWNGRADE_THRESHOLD",
+    "DailyDecision",
     "DowngradeResult",
     "EVENT_KIND_WEIGHTS",
     "REGIME_COLORS",
@@ -138,6 +146,7 @@ __all__ = [
     "compute",
     "compute_confidence_inputs",
     "compute_dealer_gamma_proxy",
+    "compute_inputs_hash",
     "compute_oi_walls",
     "delta",
     "downgrade_if_needed",
@@ -151,6 +160,7 @@ __all__ = [
     "load_default_weights",
     "load_rules_yaml",
     "load_weights_yaml",
+    "produce_daily_decision",
     "recommend",
     "rho",
     "select_strikes",
