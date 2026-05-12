@@ -12,6 +12,105 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [1.2.0] — 2026-05-12
+
+### Added (engine — `engine.execution`, new module per plan §9.8)
+
+- **`engine.execution`** — M1.11 Execution Feasibility Module. Per plan v1.2 §9.8 + §17 M1.11. Pure-function module (per ADR-0005) that scores per-leg liquidity, spread, expected slippage, and fill confidence; aggregates across multi-leg actions; and exposes the bridge into the M1.10 Confidence Composer. Public surface:
+  - Frozen-dataclass types: `Execution`, `ExecutionLeg`, `OrderType` (StrEnum: `LIMIT` / `MARKETABLE_LIMIT`).
+  - Orchestrator: `assess(*, legs: Sequence[StrikeLeg], quantities: Sequence[int] | None = None) -> Execution`. Defaults `quantities` to `[1] * len(legs)`; M1.13 (Master Decision Engine) will pass real counts derived from `Action.parameters['size_pct'] × underlying_shares / 100`.
+  - Composer bridge: `liquidity_penalty(execution) -> float` with V1 mapping `clip01(1.0 - aggregate_fill_confidence)`. Drops directly into `recommend(illiquidity_penalty=...)` or `compute_confidence_inputs(illiquidity_penalty=...)`.
+  - Aggregation helper: `aggregate(legs) -> (agg_liq, agg_fill, order_type, notes)`. Aggregate scores are `min` (weakest-link); order type is `LIMIT` iff every leg fill ≥ 0.70; notes carry collected `size_warnings` plus an M1.12 downgrade hint when aggregate fill < 0.50.
+  - Per-component scorers (V1 priors, replaceable per ADR-0008 Phase 4 ML): `norm_oi`, `norm_volume`, `compute_spread_bps`, `liquidity_score`, `expected_slippage`, `fill_confidence`, `suggested_order_type`, `tick_size`, `limit_price_band`, `size_warnings`.
+  - `DOWNGRADE_THRESHOLD = 0.50` constant — the M1.12 callback trigger.
+- **§9.8 formula, byte-for-byte**:
+  ```
+  liquidity        = clip01(0.4 × norm_oi(oi)
+                          + 0.4 × norm_volume(volume)
+                          + 0.2 × (1 − min(spread_bps, 300) / 300))
+  fill_confidence  = clip01(0.6 × liquidity + 0.4 × (1 − spread_bps / 300))
+  ```
+  V1 calibration constants documented inline as module-private names.
+
+### V1 component-scoring priors (replaceable per ADR-0008)
+
+- `norm_oi`: linear ramp, saturates at OI = 1000.
+- `norm_volume`: linear ramp, saturates at volume = 200.
+- `compute_spread_bps`: rounds `(ask − bid) / max(mid, $0.01) × 10000` to int; broken / inverted / missing quote → sentinel `9999`.
+- `expected_slippage`: half-spread + size-impact term. Size impact `= spread × clip01(qty / max(oi, 1))`. Returned in $/contract.
+- `suggested_order_type`: `LIMIT` iff fill_confidence ≥ 0.70, else `MARKETABLE_LIMIT`.
+- `tick_size`: $0.01 below $3 mid, $0.05 above (US options rule).
+- `limit_price_band`: `(mid − tick, mid + tick)`, clamped low at 0.
+- `size_warnings`: triggers at `qty > 0.10 × OI` (price-impact warning) and `qty > 0.50 × volume` (slow-fill warning).
+
+### Empty-legs handling
+
+`assess([])` returns an `Execution` with aggregate scores at 1.0, order type `LIMIT`, no legs, no notes. The composer bridge then yields `illiquidity_penalty = 0.0` — REDUCE_COVERAGE / MONETIZE_PUT / NO_OP emit codes pay no illiquidity penalty.
+
+### Integration with `recommend()`
+
+No engine-side changes required — `recommend()` already accepts `illiquidity_penalty: float = 0.0` from M1.10. M1.13 will wire:
+
+```python
+execution = engine.execution.assess(legs=strike_selection.legs, quantities=...)
+rec = engine.recommend(
+    market_state=ms,
+    flow_score=fs,
+    positions=positions,
+    profile=profile,
+    rules=rules,
+    illiquidity_penalty=engine.execution.liquidity_penalty(execution),
+)
+```
+
+### Tests
+
+- 74 new tests in `tests/test_execution.py`; 100% line coverage on `engine.execution` (167 statements, 0 missed).
+- §9.8 formula pinned: hand-calculated `liquidity = 0.4×1.0 + 0.4×0.9 + 0.2×(1−235/300) ≈ 0.8033` for a representative MSFT-ish leg; `fill_confidence ≈ 0.5687`.
+- Per-component formulas verified against docstring math (norm_oi, norm_volume, compute_spread_bps, liquidity_score, expected_slippage, fill_confidence).
+- Edge cases: missing bid/ask, inverted quote (ask < bid), zero quote (bid == ask), oi = 0, volume = 0, qty = 0, qty exceeding OI, qty exceeding volume, broken-mid cheap option, mid floor at $0.01.
+- Empty-leg assess returns trivial Execution; `liquidity_penalty(empty_exec) = 0.0`.
+- Multi-leg collar: aggregate is min across legs (weakest-link rule).
+- Quantity passthrough: default `[1] * len(legs)` matches explicit `[1]` per leg; length-mismatch raises.
+- Downgrade-threshold semantics: notes include M1.12 hint when aggregate fill < 0.50.
+- **Composer integration**: `liquidity_penalty(exe)` plugged into `recommend(illiquidity_penalty=...)` drops confidence by exactly `0.25 × penalty` (the v2.0 `weights.yaml` liquidity cap).
+- **Direct composer integration**: `compute_confidence_inputs(illiquidity_penalty=liquidity_penalty(exe))` flows through to `ConfidenceBreakdown.illiquidity_penalty`.
+- Determinism: same inputs → byte-identical `Execution`.
+- 4 Hypothesis property tests: `liquidity_score`, `fill_confidence`, and `liquidity_penalty` bounded to `[0, 1]` for any valid inputs (200/200/50 examples); `expected_slippage ≥ 0` for any valid quote + qty (100 examples).
+- Total engine tests: 226 → **300** (+74).
+
+### Dependencies
+
+No new runtime deps. The module is pure Python — no numpy / scipy required (the §9.8 formula is all elementary arithmetic).
+
+### Migration
+
+No breaking changes. Callers don't need to change anything until M1.13 wires `assess()` into the Master Decision Engine. Standalone use:
+
+```python
+from engine.execution import assess, liquidity_penalty
+from engine.strike_selector import select_strikes
+
+selection = select_strikes(action=action, chain_snapshot=chain)
+execution = assess(legs=selection.legs)
+penalty = liquidity_penalty(execution)
+
+rec = recommend(
+    market_state=ms,
+    flow_score=fs,
+    positions=positions,
+    profile=profile,
+    rules=rules,
+    illiquidity_penalty=penalty,
+)
+```
+
+### Plan deviation
+
+The plan §9.8 sketch reads `chain.lookup(a.leg_descriptor)` against an abstract `Action`. M1.11 takes concrete `StrikeLeg`s instead (their `contract: OptionContract` already carries `bid` / `ask` / `mid` / `open_interest` / `volume`). The plan was written before the M1.7 Strike Selector locked the `StrikeLeg` shape; the modern wire is selector → execution → composer, with the Strike Selector handling the `chain.lookup` step.
+
+---
+
 ## [1.1.0] — 2026-05-11
 
 ### Added (engine — `engine.confidence`, new module per plan §9.7 + §22.13)

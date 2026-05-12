@@ -23,6 +23,14 @@ from engine.confidence import (
     load_default_weights,
     load_weights_yaml,
 )
+from engine.execution import (
+    DOWNGRADE_THRESHOLD,
+    Execution,
+    ExecutionLeg,
+    OrderType,
+    assess,
+    liquidity_penalty,
+)
 from engine.flow_score import (
     Bias,
     FlowScore,
@@ -79,6 +87,7 @@ from engine.version import __version__
 
 __all__ = [
     "DEFAULT_WEIGHTS",
+    "DOWNGRADE_THRESHOLD",
     "EVENT_KIND_WEIGHTS",
     "REGIME_COLORS",
     "Action",
@@ -90,6 +99,8 @@ __all__ = [
     "EventKind",
     "EventScoreResult",
     "EventStats",
+    "Execution",
+    "ExecutionLeg",
     "FlowScore",
     "GammaScoreResult",
     "GammaWall",
@@ -101,6 +112,7 @@ __all__ = [
     "OiWalls",
     "OptionContract",
     "OptionType",
+    "OrderType",
     "PenaltyCaps",
     "PositionState",
     "PositiveWeights",
@@ -116,6 +128,7 @@ __all__ = [
     "UserStrategyProfile",
     "Weights",
     "__version__",
+    "assess",
     "classify",
     "compose",
     "compute",
@@ -127,6 +140,7 @@ __all__ = [
     "gamma",
     "gamma_score",
     "iv_score",
+    "liquidity_penalty",
     "load_default_rules",
     "load_default_weights",
     "load_rules_yaml",
