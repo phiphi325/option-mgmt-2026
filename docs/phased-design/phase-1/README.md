@@ -26,8 +26,8 @@ Phase 1 ships the engine-first MVP per master plan §17. Aggregate size: ~5 week
 | M1.13 | Master Decision Engine orchestration | M | shipped | — |
 | M1.14 | `/engine/daily-plan` + `/engine/recommend` endpoints | S | shipped | [PR #45](https://github.com/csupenn/option-mgmt-2026/pull/45) → `c0583ed` |
 | M1.15 | `/engine/what-if` + `/engine/market-state` + `/engine/flow-score` | S | shipped | [PR #47](https://github.com/csupenn/option-mgmt-2026/pull/47) → `22b0033` |
-| M1.16 | `/engine/strike-candidates` + `/engine/execution-check` (reduced scope — see dev spec) | S | **in-progress** | [`m1.16-strike-execution-endpoints.md`](./m1.16-strike-execution-endpoints.md) — Patch v1.1 companions deferred: M1.16a awaits M1.11a; M1.16b `/market/msft/latest` bundles with M1.17 CSV import; M1.16b `/health` + `/healthz` + `/version` already shipped (M0.3-era). |
-| M1.17 | `/profile` + `/outcomes` + CSV upload endpoints | M | **planned** | [`m1.17-profile-outcomes-csv-import.md`](./m1.17-profile-outcomes-csv-import.md) |
+| M1.16 | `/engine/strike-candidates` + `/engine/execution-check` (reduced scope — see dev spec) | S | shipped | [PR #48](https://github.com/csupenn/option-mgmt-2026/pull/48) → `726ec37`. Patch v1.1 companions: M1.16a awaits M1.11a; M1.16b `/market/msft/latest` bundled into M1.17 (this PR). M1.16b `/health` + `/healthz` + `/version` already shipped (M0.3-era). |
+| M1.17 | `/profile` + `/outcomes` + 5 CSV import endpoints + `/market/{ticker}/latest` (M1.16b pickup) | M | **in-progress** | [`m1.17-profile-outcomes-csv-import.md`](./m1.17-profile-outcomes-csv-import.md). Knock-on "`DailyPlanRequest.inputs` optional" deferred to M1.17.5 follow-up. |
 | M1.18 | Today screen scaffolding + DecisionCard + StrategyTitle | M | **planned** | [`m1.18-today-screen-scaffolding.md`](./m1.18-today-screen-scaffolding.md) |
 | M1.19 | ActionList + ActionRow + ExecutionBadge | S | planned (Phase 1 cont.) | TBD |
 | M1.20 | ConfidenceBreakdownChart + ExecutionFeasibilityPanel | S | planned | TBD |

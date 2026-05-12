@@ -20,7 +20,15 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.routers import auth, engine, health
+from app.routers import (
+    auth,
+    data_import,
+    engine,
+    health,
+    market,
+    outcomes,
+    profile,
+)
 from app.schemas.error import ProblemDetails
 
 API_PREFIX = "/api/v1"
@@ -86,6 +94,11 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(engine.router, prefix=API_PREFIX)
+    # M1.17
+    app.include_router(profile.router, prefix=API_PREFIX)
+    app.include_router(outcomes.router, prefix=API_PREFIX)
+    app.include_router(data_import.router, prefix=API_PREFIX)
+    app.include_router(market.router, prefix=API_PREFIX)
     return app
 
 
