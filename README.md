@@ -6,7 +6,9 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 
 ## Status
 
-**Phase 1 — Engine MVP. In progress.** Engine `1.1.0`, **226** tests on `main`. See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-transitions/`](./docs/thread-transitions/) for thread-by-thread handoff records.
+**Phase 1 — Engine MVP. In progress.** Engine `1.4.0`, **367** tests on `main`. The decision pipeline is feature-complete end-to-end through M1.13 — `produce_daily_decision()` wires every upstream engine into a single replayable `DailyDecision`. Next up: the FastAPI endpoint layer (M1.14+).
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-transitions/`](./docs/thread-transitions/) for thread-by-thread handoff records.
 
 ### Phase 0 — Foundation ✅ (all 7 milestones merged)
 
@@ -21,7 +23,7 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 | ✅ | M0.6 — Engine types: regimes, profiles, ChainSnapshot, TS type generation | [#17](https://github.com/csupenn/option-mgmt-2026/pull/17) |
 | ✅ | M0.7 — End-to-end smoke test | [#22](https://github.com/csupenn/option-mgmt-2026/pull/22) |
 
-### Phase 1 — Engine MVP (in progress)
+### Phase 1 — Engine MVP (decision pipeline complete; API + UI in progress)
 
 | | What | PR | Engine |
 |---|---|---|---|
@@ -39,10 +41,16 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 | ✅ | M1.8 — Recommendation Engine (initial: regime-strategy whitelist + Python rules) | [#36](https://github.com/csupenn/option-mgmt-2026/pull/36) | `0.11.0` |
 | ✅ | M1.9 — Recommendation Engine plan-true: 8 YAML rules + 15-clause predicate vocabulary + plan-true `recommend()` contract | [#38](https://github.com/csupenn/option-mgmt-2026/pull/38) | `1.0.0` |
 | ✅ | M1.10 — Confidence Composer (multiplicative §22.13) + `weights.yaml` + 6 component scoring fns | [#39](https://github.com/csupenn/option-mgmt-2026/pull/39) | `1.1.0` |
-| | M1.11 — Execution Feasibility Module (liquidity / spread / slippage / fill) | — | — |
-| | M1.12 — Execution downgrade callback into Strike Selector | — | — |
-| | M1.13 — Master Decision Engine + `DailyDecision` schema (orchestrator) | — | — |
-| | M1.14–M1.25 — `/engine/*` APIs, Today screen, Collar Builder, Outcome Tracker | — | — |
+| ✅ | M1.11 — Execution Feasibility Module (`assess()`; per-leg liquidity / spread / slippage / fill; `liquidity_penalty()` bridge to composer) | [#41](https://github.com/csupenn/option-mgmt-2026/pull/41) | `1.2.0` |
+| ✅ | M1.12 — Execution downgrade callback (`downgrade_if_needed()` + 2-rung liquidity ladder; pre-filters chain when any leg fill < 0.50) | [#42](https://github.com/csupenn/option-mgmt-2026/pull/42) | `1.3.0` |
+| ✅ | M1.13 — Master Decision Engine (`produce_daily_decision()` + `DailyDecision` + `compute_inputs_hash()`; three-pin replay lock) | [#43](https://github.com/csupenn/option-mgmt-2026/pull/43) | `1.4.0` |
+| | M1.14 — `POST /engine/daily-plan` + `POST /engine/recommend` endpoints (wires `produce_daily_decision()` into FastAPI) | — | — |
+| | M1.15 — `/engine/what-if` + `/engine/market-state` + `/engine/flow-score` | — | — |
+| | M1.16 — `/engine/strike-candidates` + `/engine/execution-check` | — | — |
+| | M1.17 — `/profile` + `/outcomes` + CSV upload endpoints | — | — |
+| | M1.18–M1.25 — Today screen, Collar Builder, Outcome Tracker | — | — |
+
+**Decision pipeline status (post-M1.13).** Engine `1.4.0` ships every node of the §9.6 pipeline as a pure, deterministic function. A single `produce_daily_decision(...)` call now wires Market State → Flow Score → Recommendation (rule pipeline) → Strike Selector → Execution Feasibility + Downgrade → Confidence Composer into one `DailyDecision` with `engine_version` + `weights_version` + `inputs_hash` for exact replay. The API surface (M1.14+) is the next major milestone block.
 
 **Milestone-numbering correction.** PRs #36 and #37 were originally labeled "M1.7" and "M1.8" respectively; per plan v1.2 §17 the actual milestone numbers are swapped (Strike Selector is M1.7 size L; Recommendation Engine is M1.8 size M). The functional code is correct in both PRs — only the PR titles + branch names mis-labeled the milestone. The table above shows the canonical plan §17 mapping; CHANGELOG `[1.0.0]` documents the correction.
 
@@ -74,7 +82,7 @@ Read [`docs/`](./docs/) before any code change:
 - [`docs/decisions/`](./docs/decisions/) — ADRs (engine-first, regime taxonomy, confidence composer, ...).
 - [`docs/enhancements/`](./docs/enhancements/) — third-party enhancement specs + per-spec assessments. Adoption decisions live in ADRs.
 - [`docs/thread-transitions/`](./docs/thread-transitions/) — per-AI-thread handoff records. One file per thread, capturing what shipped + decisions + handoff brief.
-- [`docs/tutorials/`](./docs/tutorials/) — long-form pedagogical tutorials (Market State, Scoring Primitives, Flow Score, **Confidence Composer**).
+- [`docs/tutorials/`](./docs/tutorials/) — long-form pedagogical tutorials (Market State, Scoring Primitives, Flow Score, Confidence Composer, **Master Decision Engine**).
 - [`CHANGELOG.md`](./CHANGELOG.md) — per-engine-version changelog (Keep a Changelog format).
 
 The full development plan v1.2 lives in the Hyperagent thread `cmokf2twq0gsv06adlij0glqs`.
@@ -87,7 +95,7 @@ apps/
   api/              # FastAPI — engine endpoints                        [shipped M0.3]
   jobs/             # (Phase 2) scheduled ingestion — consolidated into apps/api/app/jobs/ in P1
 packages/
-  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.1.0]
+  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.4.0]
     config/         # YAML configs (filesystem boundary per ADR-0005)
       rules.yaml            # Recommendation Engine V1 rules            [M1.9]
       weights.yaml          # Confidence Composer V1 weights (v2.0)     [M1.10]
@@ -96,7 +104,7 @@ packages/
       regimes.py            # 6 locked regimes + REGIME_SPEC table      [M0.6 / M1.4]
       profiles.py           # UserStrategyProfile + ProfileStyle        [M0.6 / M1.9]
       types.py              # OptionContract + ChainSnapshot            [M0.6]
-      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.1.0]
+      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.4.0]
       greeks.py             # BS delta/gamma/vega/theta/rho             [M1.6]
       market_state/         # M1.1-M1.4 — produces MarketStateResult
         iv.py               # IV rank + IV percentile                   [M1.1]
@@ -136,6 +144,18 @@ packages/
         components.py       # 6 per-component scoring functions         [M1.10]
         yaml_loader.py      # weights.yaml filesystem boundary          [M1.10]
         types.py            # ConfidenceInputs + Weights + Breakdown    [M1.10]
+      execution/            # M1.11 + M1.12 — fill-feasibility + downgrade
+        assess.py           # assess() per-leg + aggregate + composer bridge [M1.11]
+        liquidity.py        # norm_oi/norm_volume/spread_bps/liquidity   [M1.11]
+        slippage.py         # expected_slippage = half-spread + size impact [M1.11]
+        fill.py             # fill_confidence + order-type + threshold [M1.11]
+        size.py             # tick_size/limit_price_band/size_warnings  [M1.11]
+        downgrade.py        # downgrade_if_needed() + filter_chain_…    [M1.12]
+        types.py            # Execution + ExecutionLeg + OrderType      [M1.11]
+      decision/             # M1.13 — Master Decision Engine + replay
+        produce.py          # produce_daily_decision() orchestrator    [M1.13]
+        hashing.py          # compute_inputs_hash() (canonical JSON)   [M1.13]
+        types.py            # DailyDecision frozen dataclass           [M1.13]
   shared-types/     # TS types generated from Pydantic                  [shipped M0.6]
     src/            # generated regimes.ts / profiles.ts / types.ts
     scripts/
@@ -179,6 +199,37 @@ cd apps/web && pnpm install && pnpm dev
 cd packages/engine && uv sync --dev && uv run pytest -q
 ```
 
+Hello-world `DailyDecision` (Python):
+
+```python
+from datetime import datetime
+from engine import (
+    produce_daily_decision, ChainSnapshot, OptionContract, OptionType,
+    PositionState, UserStrategyProfile, RiskTolerance, IncomeNeed, ProfileStyle,
+    MarketStateResult, Regime, FlowScore, Bias, RecommendedAction,
+)
+
+# (caller hydrates upstream engine outputs — typically the FastAPI service)
+chain = ChainSnapshot(...)              # from option_chain_snapshots
+positions = PositionState(...)          # from option_positions
+profile = UserStrategyProfile(...)      # from users.strategy_profile
+market_state = MarketStateResult(...)   # from engine.market_state.classify()
+flow_score = FlowScore(...)             # from engine.flow_score.compute()
+
+decision = produce_daily_decision(
+    as_of=datetime.utcnow(),
+    ticker="MSFT",
+    chain_snapshot=chain,
+    positions=positions,
+    profile=profile,
+    market_state=market_state,
+    flow_score=flow_score,
+)
+# decision.confidence   → post-downgrade composite [0, 1]
+# decision.inputs_hash  → sha256:<64hex>, ready for idempotent persistence
+# decision.escalated    → True iff fill quality couldn't be rescued
+```
+
 ## Make targets
 
 | Command | Effect |
@@ -215,10 +266,10 @@ CI's drift check fails any commit that updates the Python without regenerating t
 
 ## Conventions
 
-- **Engine-first.** `packages/engine` is pure-function Python with no I/O. Every API and UI piece exists to surface or input to engine outputs. Two filesystem boundary modules (`engine/recommendation/yaml_loader.py`, `engine/confidence/yaml_loader.py`) handle the `rules.yaml` / `weights.yaml` reads; callers pass the parsed values to `recommend()`.
-- **Auditable.** Every `DailyDecision` is persisted with `inputs_hash`, `engine_version`, `weights_version` for exact replay.
+- **Engine-first.** `packages/engine` is pure-function Python with no I/O. Every API and UI piece exists to surface or input to engine outputs. Two filesystem-boundary modules (`engine/recommendation/yaml_loader.py`, `engine/confidence/yaml_loader.py`) handle the `rules.yaml` / `weights.yaml` reads; callers pass the parsed values to `recommend()` / `produce_daily_decision()`.
+- **Auditable.** Every `DailyDecision` is persisted with `inputs_hash`, `engine_version`, `weights_version` for exact replay. The three pins together identify a unique replayable decision; the M1.13 `compute_inputs_hash()` produces cross-environment-deterministic canonical-JSON SHA-256 over all engine inputs.
 - **No execution.** This codebase has no broker write paths. CI guard (`scripts/check_no_broker_imports.sh`, M0.5) enforces it.
-- **Deterministic V1 → ML in Phase 4.** ML upgrades replace specific engine nodes without changing interfaces. V1 stubs (`futures_basis = 0` until P2 futures service; `illiquidity_penalty = 0` until M1.11 Execution Feasibility) are plumbed through explicit kwargs so the M1.x → V2 hand-off is a one-line callsite change.
+- **Deterministic V1 → ML in Phase 4.** ML upgrades replace specific engine nodes without changing interfaces. V1 stubs (`futures_basis = 0` until P2 futures service) are plumbed through explicit kwargs so the M1.x → V2 hand-off is a one-line callsite change.
 - **Branch + PR workflow.** Every milestone is a branch named `feat/<milestone-id>-<slug>`, merged via squash into `main`. Conventional-commit messages.
 - **Engine version bump on every `packages/engine/engine/` change.** Per [ADR-0005](./docs/decisions/0005-engine-pure-function-discipline.md). CI guard enforces. Bump rules: patch (bug fix, no schema change), minor (new engine, score, or public function), major (schema change, removed/renamed fields, semantic shift).
 

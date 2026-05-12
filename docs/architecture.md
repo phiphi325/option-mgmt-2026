@@ -16,20 +16,20 @@ This document mirrors plan v1.2 §5 (System Architecture). Read the plan in the 
 |     - Regime + REGIME_COLORS (6 locked, ADR-0002)         |
 |     - UserStrategyProfile + ProfileStyle (frozen, ADR-0005)|
 |     - OptionContract / ChainSnapshot                      |
-|   1. Market State Engine    -> MarketStateResult  [M1.4]  |
-|   2. Flow Score Engine      -> FlowScore          [M1.5b] |
-|   3. Strike Selector        -> StrikeSelection    [M1.7]  |
-|   4. Recommendation Engine  -> RecommendationResult [M1.8/M1.9] |
-|   5. Master Decision Engine -> DailyDecision      [M1.13] |
+|   1. Market State Engine    -> MarketStateResult     [M1.4]  |
+|   2. Flow Score Engine      -> FlowScore             [M1.5b] |
+|   3. Strike Selector        -> StrikeSelection       [M1.7]  |
+|   4. Recommendation Engine  -> RecommendationResult  [M1.8/M1.9] |
+|   5. Master Decision Engine -> DailyDecision         [M1.13 - shipped] |
 |   +. Collar Builder (v1.1)  -> ranked collar structures   |
 +-----------------------------------------------------------+
 |  CROSS-CUTTING MODULES (consumed by engines)              |
 |   A. User Strategy Profile  <- settings                   |
-|   B. Confidence Composer    -> confidence + breakdown [M1.10] |
-|   C. Execution Feasibility  -> liquidity / slippage [M1.11 planned] |
+|   B. Confidence Composer    -> confidence + breakdown    [M1.10] |
+|   C. Execution Feasibility  -> liquidity + downgrade ladder [M1.11+M1.12] |
 |   D. Outcome Tracker        -> learning loop (P3+)        |
-|   E. Black-Scholes Greeks   -> delta/gamma/vega/...  [M1.6] |
-|   F. Scoring primitives     -> iv/structure/event/gamma [M1.4a/M1.5a] |
+|   E. Black-Scholes Greeks   -> delta/gamma/vega/...      [M1.6]  |
+|   F. Scoring primitives     -> iv/structure/event/gamma  [M1.4a/M1.5a] |
 +-----------------------------------------------------------+
 |  Data ingestion + provider abstraction                    |
 |  Postgres 16  |  Redis (Phase 2+, optional cache)         |
@@ -53,16 +53,16 @@ This document mirrors plan v1.2 §5 (System Architecture). Read the plan in the 
 1. **Ingestion** — cron job (`apps/jobs`, P2+) calls `MarketDataProvider.get_chain()` etc. and writes snapshots to Postgres. In MVP this is replaced by user CSV upload.
 2. **User opens `/today`** — Next.js server component calls `POST /api/v1/engine/daily-plan { ticker: "MSFT" }`.
 3. **API loads inputs** — most-recent rows from `positions`, `option_positions`, `option_chain_snapshots`, `iv_history`, `events`, `users.strategy_profile`.
-4. **API calls `engine.decision.produce_daily_decision(...)`** which orchestrates Market State → Flow Score → Strike Selector → Recommendation → Confidence + Execution annotation.
+4. **API calls `engine.decision.produce_daily_decision(...)`** (M1.13) which orchestrates: pre-computed `MarketStateResult` + `FlowScore` → tentative `recommend()` (M1.9, with `illiquidity_penalty=0`) → per-action `downgrade_if_needed()` (M1.12, which wraps M1.7 `select_strikes()` + M1.11 `assess()`) → final `compose()` (M1.10) with the aggregate post-downgrade penalty → `DailyDecision` with the three-pin replay lock.
 5. **API persists** the full `DailyDecision` payload to `daily_decisions` with `inputs_hash`, `engine_version`, `weights_version`. Returns the payload.
 6. **Today screen renders** the `DailyDecision`. Drill-down links route to `/chain`, `/iv`, etc. (Phase 2+).
 7. **Later**, the user (Phase 1) or an auto-fill heuristic (Phase 3) writes a row to `outcomes` linked to `daily_decision_id`. Phase 4 ML consumes `(state, decision, outcome)` triples.
 
 ## Versioning rules
 
-- **`engine_version`** (semver, e.g. `1.1.0`) bumps on any change to `packages/engine/engine/`. Enforced by `scripts/check_engine_version_bump.sh` (M0.5+).
+- **`engine_version`** (semver, e.g. `1.4.0`) bumps on any change to `packages/engine/engine/`. Enforced by `scripts/check_engine_version_bump.sh` (M0.5+).
 - **`weights_version`** (e.g. `v2.0`) bumps on any change to `packages/engine/config/weights.yaml`. Stamped on every `ConfidenceBreakdown` produced by the Confidence Composer (M1.10) and persisted on each `DailyDecision`. A unit test (`tests/test_confidence.py::test_default_weights_matches_yaml_drift_check`) enforces that the on-disk YAML and the in-code `engine.confidence.DEFAULT_WEIGHTS` constant stay in sync.
-- **`inputs_hash`** is a SHA-256 over the canonical JSON of all inputs (positions, chain, IV, events, profile snapshot at decision time). Enables exact replay.
+- **`inputs_hash`** is a SHA-256 over the canonical JSON of all engine inputs (`as_of`, `ticker`, `chain_snapshot`, `positions`, `profile`, `market_state`, `flow_score`) computed by `engine.decision.compute_inputs_hash(...)` (M1.13). Returns `"sha256:" + 64-char-hex` (71 chars). Canonical JSON conventions (sorted keys, no whitespace, naive datetimes assumed UTC, frozensets sorted by repr) give cross-environment determinism — same logical inputs → same hash on Python 3.9/3.11/3.14. The three pins (`engine_version`, `weights_version`, `inputs_hash`) together identify a unique replayable decision. The `decision_id` is derived deterministically from `inputs_hash[:12] + as_of.timestamp()` for idempotent persistence via `INSERT ... ON CONFLICT (user_id, inputs_hash) DO RETURNING`.
 - **`next` pin** is enforced by `scripts/check_next_version.sh`. Currently `16.2.6`.
 
 ## Key design invariants
@@ -74,6 +74,7 @@ This document mirrors plan v1.2 §5 (System Architecture). Read the plan in the 
 5. **No execution**: this codebase has no broker write paths. Enforced via `scripts/check_no_broker_imports.sh` (M0.5+).
 6. **Disclaimer gate**: every UI surface and every API response includes the disclaimer text (per plan §15 + [`disclaimers.md`](./disclaimers.md)).
 7. **Locked taxonomies**: 6 regimes (see [ADR-0002](./decisions/0002-regime-taxonomy.md)), 8 V1 rules (`packages/engine/config/rules.yaml`, M1.9), 6 scenarios.
+8. **Two-stage `compose()` in the Master Decision Engine** (M1.13): the orchestrator calls `compose()` once internally to `recommend()` (with `illiquidity_penalty=0` so the rule pipeline can use its `confidence_lte:` clause) and once externally with the post-downgrade `liquidity_penalty(execution)`. `recommendation.confidence` (pre-execution) stays in the payload for UI drill-down; `decision.confidence` (post-execution) is the user-facing number. Documented in CHANGELOG `[1.4.0]`.
 
 ## Caching
 

@@ -8,7 +8,7 @@
 |---|---|---|
 | API URL prefix | `apps/api/app/main.py` | `API_PREFIX = "/api/v1"` |
 | API version | `apps/api/app/core/config.py` | `Settings.api_version` (env-overridable) |
-| Engine version | `apps/api/app/core/config.py` (M0.5); engine source-of-truth is `packages/engine/engine/version.py` (M0.6+, currently `1.1.0`) | `Settings.engine_version` |
+| Engine version | `apps/api/app/core/config.py` (M0.5); engine source-of-truth is `packages/engine/engine/version.py` (M0.6+, currently `1.4.0`) | `Settings.engine_version` |
 | Weights version | `apps/api/app/core/config.py` (M0.5); engine source-of-truth is `packages/engine/config/weights.yaml` (M1.10+, currently `v2.0`) | `Settings.weights_version = "v2.0"` |
 | JWT secret min length | `apps/api/app/core/config.py` | `Field(min_length=16)` on `jwt_secret` |
 | JWT algorithm | `apps/api/app/core/config.py` | `jwt_algorithm = "HS256"` |
@@ -30,7 +30,7 @@
 | User strategy profile | `packages/engine/engine/profiles.py` | `UserStrategyProfile`, `RiskTolerance`, `IncomeNeed`, **`ProfileStyle`** | shipped M0.6 (`drawdown_tolerance` + `style` added M1.9) |
 | Option contract type | `packages/engine/engine/types.py` | `OptionContract`, `OptionType` | shipped M0.6 |
 | Chain snapshot type | `packages/engine/engine/types.py` | `ChainSnapshot` | shipped M0.6 |
-| Engine version (semver) | `packages/engine/engine/version.py` | `__version__` | shipped M0.6 (currently `1.1.0`) |
+| Engine version (semver) | `packages/engine/engine/version.py` | `__version__` | shipped M0.6 (currently `1.4.0`) |
 | `clip01` saturator | `packages/engine/engine/_utils.py` | `clip01(x: float) -> float` | shipped M1.3 |
 | Black-Scholes Greeks | `packages/engine/engine/greeks.py` | `delta`, `gamma`, `vega`, `theta`, `rho`, `time_to_expiry_years` | shipped M1.6 |
 | Market State result | `packages/engine/engine/market_state/classify.py` | `MarketStateResult`, `classify()` | shipped M1.4 |
@@ -41,8 +41,10 @@
 | Recommendation Engine | `packages/engine/engine/recommendation/` | `recommend()`, `RecommendationResult`, `Action`, `EmittedAction`, `RuleSpec`, `MatchedRule`, `PositionState` + `load_default_rules()` | shipped M1.9 (engine `1.0.0`) |
 | Confidence weights | `packages/engine/config/weights.yaml` | `version`, `positive_weights.{flow,struct,regime,signal}`, `penalty_caps.{event,liquidity}` (v2.0 per plan §22.13) | shipped M1.10 |
 | Confidence Composer | `packages/engine/engine/confidence/` | `compose()`, `ConfidenceInputs`, `ConfidenceBreakdown`, `Weights`, `DEFAULT_WEIGHTS`, `compute_confidence_inputs()` + 6 per-component fns + `load_default_weights()` | shipped M1.10 (engine `1.1.0`) |
-| Execution feasibility | `packages/engine/engine/execution/` | `assess()`, `ExecutionFeasibilityResult` | M1.11 (planned) |
-| Master Decision Engine | `packages/engine/engine/decision.py` | `produce_daily_decision()`, `DailyDecision` | M1.13 (planned) |
+| Execution Feasibility | `packages/engine/engine/execution/` | `assess()`, `Execution`, `ExecutionLeg`, `OrderType` (`LIMIT` / `MARKETABLE_LIMIT`), `liquidity_penalty()` (composer bridge), 10 per-component scorers (`norm_oi`, `norm_volume`, `compute_spread_bps`, `liquidity_score`, `expected_slippage`, `fill_confidence`, `suggested_order_type`, `tick_size`, `limit_price_band`, `size_warnings`), `DOWNGRADE_THRESHOLD = 0.50` | shipped M1.11 (engine `1.2.0`) |
+| Execution downgrade callback | `packages/engine/engine/execution/downgrade.py` | `downgrade_if_needed()`, `DowngradeResult`, `filter_chain_by_liquidity()` (reusable beyond M1.12); V1 ladder rungs (`min_oi`, `min_volume`, `max_spread_bps`) | shipped M1.12 (engine `1.3.0`) |
+| Master Decision Engine | `packages/engine/engine/decision/` | `produce_daily_decision()`, `DailyDecision` (frozen-dataclass projection of plan §7), `compute_inputs_hash()` (canonical JSON over engine inputs), `DEFAULT_DISCLAIMERS` | shipped M1.13 (engine `1.4.0`) |
+| Engine disclaimers (§15) | `packages/engine/engine/decision/produce.py` | `DEFAULT_DISCLAIMERS: Final[tuple[str, ...]]` (3 canonical engine-side strings; API layer may augment) | shipped M1.13 |
 | Six scenarios (P3) | `packages/engine/engine/scenarios/__init__.py` | `class ScenarioId(str, Enum)`, `SCENARIO_PARAMS` | M3.x |
 
 ## Web (apps/web)
@@ -135,7 +137,8 @@ Deferred (E6 Multi-Expiry, E7 Backtest) remain in the spec but do not have a reg
 
 ## Open gaps
 
-- **engine_version + weights_version ownership** — currently lives in `Settings` (apps/api). Engine source-of-truth is `packages/engine/engine/version.py` (`1.1.0`) and `packages/engine/config/weights.yaml` (`v2.0`). The next API change should make `Settings` import from `engine.version` and read `weights_version` from `engine.confidence.DEFAULT_WEIGHTS.version` rather than carrying its own copies. Tracked for M1.13–M1.15 (when the first decision endpoint lands).
-- **`weights.yaml` hot-swap path** — ADR-0008 Phase 1.5 plans to move `packages/engine/config/weights.yaml` to `apps/api/app/config/weights.yaml` so ops can hot-swap without bumping engine version. The engine package will still ship its packaged default; production callers will use `load_weights_yaml(path)` once at API startup and pass the result through `recommend(weights=...)`.
+- **engine_version + weights_version ownership** — currently lives in `Settings` (apps/api). Engine source-of-truth is `packages/engine/engine/version.py` (`1.4.0`) and `packages/engine/config/weights.yaml` (`v2.0`). M1.13 stamps both onto every `DailyDecision` via `produce_daily_decision()` (via `engine.__version__` and `weights.version`). The M1.14 API change should make `Settings` import from `engine.version` and read `weights_version` from `engine.confidence.DEFAULT_WEIGHTS.version` rather than carrying its own copies.
+- **`weights.yaml` hot-swap path** — ADR-0008 Phase 1.5 plans to move `packages/engine/config/weights.yaml` to `apps/api/app/config/weights.yaml` so ops can hot-swap without bumping engine version. The engine package will still ship its packaged default; production callers will use `load_weights_yaml(path)` once at API startup and pass the result through `recommend(weights=...)` / `produce_daily_decision(weights=...)`.
+- **`inputs_hash` cross-environment determinism** — M1.13 `compute_inputs_hash()` produces canonical-JSON SHA-256 over engine inputs that matches across Python 3.9 / 3.11 / 3.14. The canonicalization rules (sorted keys, no whitespace, naive datetimes assumed UTC, frozensets sorted by repr, dataclass introspection via `dataclasses.fields()`, Pydantic models via `model_dump(mode="json")`) are documented in `engine/decision/hashing.py`. Any future change to a dataclass / Pydantic model in the input set MUST verify hash stability — `tests/test_decision.py` pins this on the current input shapes.
 - **Disclaimer text consolidation** — still duplicated between `DisclaimerGate.tsx` and `DisclaimerFooter.tsx`. Will be consolidated to `apps/web/lib/disclaimers.ts` in M1.x.
 - **Persona preset labels** — `apps/web/components/settings/PersonaPresetButtons.tsx` lands when the Settings page is built (M2.x).
