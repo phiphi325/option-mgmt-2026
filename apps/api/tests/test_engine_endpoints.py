@@ -268,15 +268,15 @@ def test_daily_plan_high_iv_pin_emits_sell_call_action(
 # ----------------------------------------------------------------------
 
 
-def test_daily_plan_missing_inputs_returns_422(
-    client: TestClient, auth_headers: dict[str, str]
-) -> None:
-    r = client.post(
-        "/api/v1/engine/daily-plan",
-        json={"ticker": "MSFT", "persist": False},
-        headers=auth_headers,
-    )
-    assert r.status_code == 422, r.text
+# NOTE: M1.17.5 made `DailyPlanRequest.inputs` optional — submitting a
+# body without `inputs` no longer triggers a Pydantic 422 because the
+# service hydrates from DB instead. The previous
+# `test_daily_plan_missing_inputs_returns_422` test was therefore
+# semantically invalidated and is removed. The new happy path (omitted
+# inputs → DB hydration → 200) and the new failure cases (missing
+# positions / chain / iv_history → 422 from hydration) are smoke-tested
+# in `tests/test_smoke_m1_17_5.py` against the real Postgres in the CI
+# smoke job — same rationale as M1.17's market_service unit-test gap.
 
 
 def test_daily_plan_invalid_iv_rank_returns_422(

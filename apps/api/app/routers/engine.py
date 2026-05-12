@@ -73,25 +73,34 @@ async def daily_plan(
     session: SessionDep,
     user_id: AuthedUserDep,
 ) -> DailyDecisionResponse:
-    """V1 daily-plan endpoint per plan §17 M1.14.
+    """V1 daily-plan endpoint per plan §17 M1.14 + M1.17.5.
 
     Runs `engine.produce_daily_decision()` against the request's
-    hydrated inputs (V1 — M1.15+ optionally hydrates from Postgres
-    when `inputs` is omitted). Persists a `daily_decisions` row when
-    `persist=True` (default); idempotency via `ON CONFLICT (user_id,
-    inputs_hash) DO NOTHING`.
+    hydrated inputs. As of M1.17.5, `inputs` is OPTIONAL: when omitted,
+    the API service hydrates from the latest DB rows via
+    `inputs_hydration_service.hydrate_engine_inputs(...)`.
+
+    Persists a `daily_decisions` row when `persist=True` (default);
+    idempotency via `ON CONFLICT (user_id, inputs_hash) DO NOTHING`.
 
     Returns the full `DailyDecision` JSON projection plus an
     `is_new_row` flag distinguishing fresh inserts from idempotent hits.
+
+    Raises 422 when hydration prerequisites are missing
+    ("missing_positions" / "missing_chain" / "insufficient_iv_history" —
+    see DailyPlanRequest docstring for client guidance).
     """
-    decision, is_new_row = await produce_and_persist(
-        session=session,
-        user_id=user_id,
-        ticker=request.ticker,
-        as_of=request.as_of,
-        inputs=request.inputs,
-        persist=request.persist,
-    )
+    try:
+        decision, is_new_row = await produce_and_persist(
+            session=session,
+            user_id=user_id,
+            ticker=request.ticker,
+            as_of=request.as_of,
+            inputs=request.inputs,
+            persist=request.persist,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return DailyDecisionResponse(
         decision=decision_to_jsonable_dict(decision),
         is_new_row=is_new_row,

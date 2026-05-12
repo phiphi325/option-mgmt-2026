@@ -63,7 +63,7 @@ async def produce_and_persist(
     user_id: str,
     ticker: str,
     as_of: datetime | None,
-    inputs: EngineInputs,
+    inputs: EngineInputs | None,
     persist: bool = True,
 ) -> tuple[DailyDecision, bool]:
     """Run the Master Decision Engine and (optionally) persist the result.
@@ -73,8 +73,9 @@ async def produce_and_persist(
         user_id:   Authenticated user UUID (string).
         ticker:    Underlying symbol (MSFT-only in V1; reserved for multi-ticker).
         as_of:     Decision-time timestamp. Defaults to `datetime.now(UTC)` when None.
-        inputs:    Full hydrated input bundle (M1.14 V1 — eventually replaced
-                   by DB hydration once M1.15+ data endpoints ship).
+        inputs:    Full hydrated input bundle. **Optional as of M1.17.5**:
+                   when None, the service hydrates from the latest DB rows
+                   via `inputs_hydration_service.hydrate_engine_inputs(...)`.
         persist:   When True, INSERT a `daily_decisions` row with idempotency
                    via ON CONFLICT (user_id, inputs_hash) DO NOTHING.
 
@@ -85,9 +86,23 @@ async def produce_and_persist(
         already present (idempotent retry hit).
 
     Raises:
-        ValueError: When the engine rejects the inputs (e.g. empty rules).
+        ValueError: When the engine rejects the inputs (e.g. empty rules),
+            OR when DB hydration fails ("missing_positions",
+            "missing_chain", "insufficient_iv_history"). The router maps
+            both shapes to HTTP 422.
     """
     effective_as_of = as_of if as_of is not None else datetime.now(timezone.utc)  # noqa: UP017
+
+    # Hydrate from DB when caller didn't supply inputs (M1.17.5 path).
+    if inputs is None:
+        from app.services.inputs_hydration_service import hydrate_engine_inputs
+
+        inputs = await hydrate_engine_inputs(
+            session=session,
+            user_id=user_id,
+            ticker=ticker,
+            as_of=effective_as_of,
+        )
 
     decision: DailyDecision = produce_daily_decision(
         as_of=effective_as_of,

@@ -73,11 +73,30 @@ class EngineInputs(BaseModel):
 class DailyPlanRequest(BaseModel):
     """Request body for `POST /engine/daily-plan`.
 
-    Per plan §7 (V1 shape) — but accepts an explicit `inputs` bundle
-    until M1.15+ hydrates upstream engines and M1.17 hydrates the
-    position / chain rows. `persist=True` is the production default
-    (writes a `daily_decisions` row); `persist=False` is the M1.16
-    `/engine/what-if` semantics (transient run).
+    Per plan §7 + §17 M1.17.5.
+
+    `inputs` is OPTIONAL as of M1.17.5: when omitted, the API service
+    hydrates `EngineInputs` from the latest DB rows (positions / chain
+    / iv_history / hv_history / events / profile) and reproduces the
+    upstream engine pipeline (market_state.classify + flow_score.compute)
+    server-side. See `app/services/inputs_hydration_service.py`.
+
+    When `inputs` is provided, the engine uses it verbatim (matches the
+    original M1.14 behavior). This path is preserved for:
+      - debugging / what-if drilling
+      - explicit testing with fixture data
+      - integration scenarios where the caller already has hydrated state
+
+    `persist=True` is the production default; `persist=False` is the
+    M1.15 `/engine/what-if` semantics.
+
+    HTTP 422 cases when `inputs` is omitted and hydration fails:
+      - missing_positions       (no positions or open option_positions for user)
+      - missing_chain           (option_chain_snapshots empty for ticker)
+      - insufficient_iv_history (iv_history < 30 rows for ticker; §22.12)
+
+    Clients receiving these errors should prompt the user to upload the
+    relevant CSV via `POST /api/v1/data/*/import-csv`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -87,7 +106,13 @@ class DailyPlanRequest(BaseModel):
         default=None,
         description="Decision-time timestamp. Defaults to server `now()` when omitted.",
     )
-    inputs: EngineInputs
+    inputs: EngineInputs | None = Field(
+        default=None,
+        description=(
+            "Hydrated engine inputs. When omitted, the API service hydrates "
+            "from DB; see class docstring."
+        ),
+    )
     persist: bool = Field(
         default=True,
         description="Persist a `daily_decisions` row. Set False for transient runs.",
