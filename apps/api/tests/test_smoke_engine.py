@@ -1,4 +1,4 @@
-"""M1.14 end-to-end smoke tests for `/engine/*` endpoints.
+"""M1.14 + M1.15 end-to-end smoke tests for `/engine/*` endpoints.
 
 These tests exercise the live FastAPI process + real Postgres,
 matching the M0.7 smoke pattern in `tests/test_smoke_e2e.py`.
@@ -7,20 +7,20 @@ Activation:
   - Skipped when `SMOKE_API_URL` is unset.
   - Run via `make smoke` locally or via the `smoke` CI job.
 
-Setup the smoke test performs on each run (no external fixtures):
-  1. INSERT a test user row directly via the smoke API's DB connection
-     (we need a valid user_id for the JWT subject; the FK on
-     `daily_decisions.user_id` requires the user to exist).
-  2. Issue a JWT for that user via app.core.security.create_access_token.
-  3. POST /engine/daily-plan with persist=True.
-  4. Verify 200 + a fresh `daily_decisions` row.
-  5. POST the same body again. Verify 200 + `is_new_row=False`
-     (idempotent ON CONFLICT hit) + same `decision_id`.
-  6. Verify the persisted row matches the decision payload's
-     `inputs_hash` / `engine_version` / `weights_version`.
+M1.14 coverage:
+  - daily-plan persistence (fresh row + idempotency via ON CONFLICT)
+  - 401 on unauthenticated calls
+  - /recommend live + OpenAPI registration
 
-The smoke test relies on the M1.14 migration `0002_daily_decisions_unique_inputs_hash`
-having been applied (the CI smoke job runs `alembic upgrade head`).
+M1.15 additions (this file's lower half):
+  - /engine/what-if MUST NOT persist (the §22.14 contract verified
+    against a real Postgres row-count check)
+  - /engine/market-state classifies the M1.14 HIGH_IV_PIN fixture
+  - /engine/flow-score returns a V1-LOCKED-contract-complete payload
+
+The smoke test relies on migration `0002_dd_unique_user_hash` being
+applied (the CI smoke job runs `alembic upgrade head` before the
+uvicorn server starts).
 
 Cleanup: tests insert their own user with a deterministic test UUID
 and clean up rows on teardown (via the post-test SQL block). This
@@ -302,9 +302,115 @@ async def test_recommend_endpoint_returns_200_in_smoke(
 
 
 async def test_engine_routes_in_smoke_openapi(http: httpx.AsyncClient) -> None:
-    """The smoke API's OpenAPI schema includes the M1.14 routes."""
+    """The smoke API's OpenAPI schema includes the M1.14 + M1.15 routes."""
     r = await http.get("/openapi.json")
     assert r.status_code == 200
     paths = r.json()["paths"]
+    # M1.14
     assert "/api/v1/engine/daily-plan" in paths
     assert "/api/v1/engine/recommend" in paths
+    # M1.15
+    assert "/api/v1/engine/what-if" in paths
+    assert "/api/v1/engine/market-state" in paths
+    assert "/api/v1/engine/flow-score" in paths
+
+
+# ----------------------------------------------------------------------
+# M1.15 smoke tests
+# ----------------------------------------------------------------------
+
+
+async def test_what_if_does_not_persist_smoke(
+    http: httpx.AsyncClient,
+    db_setup: None,
+    auth_headers: dict[str, str],
+) -> None:
+    """POST /engine/what-if MUST NOT write a daily_decisions row (§22.14)."""
+    _ = db_setup
+
+    # Count rows before the call
+    with psycopg.connect(_psycopg_url()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM daily_decisions WHERE user_id = %s;",
+                (_TEST_USER_ID,),
+            )
+            count_row = cur.fetchone()
+    assert count_row is not None
+    before = count_row[0]
+
+    body = {
+        "ticker": "MSFT",
+        "as_of": datetime(2026, 5, 20, 14, 30, tzinfo=timezone.utc).isoformat(),  # noqa: UP017
+        "inputs": _inputs_payload(),
+        "overrides": {},
+    }
+    r1 = await http.post("/engine/what-if", json=body, headers=auth_headers)
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["is_new_row"] is False  # Literal[False] discriminant
+
+    # Call again to be extra sure no row sneaks in on retries
+    r2 = await http.post("/engine/what-if", json=body, headers=auth_headers)
+    assert r2.status_code == 200, r2.text
+
+    with psycopg.connect(_psycopg_url()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM daily_decisions WHERE user_id = %s;",
+                (_TEST_USER_ID,),
+            )
+            count_row = cur.fetchone()
+    assert count_row is not None
+    after = count_row[0]
+    assert after == before, (
+        f"what-if must not persist; row count changed from {before} to {after}"
+    )
+
+
+async def test_market_state_smoke(
+    http: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """POST /engine/market-state classifies the same HIGH_IV_PIN inputs as
+    the M1.14 daily-plan fixture."""
+    body = _inputs_payload()["market_state"]
+    # MarketStateRequest schema drops `regime`/`regime_score`/`all_scores`/
+    # `tags`/`max_pain_delta_pct` (these are CLASSIFY OUTPUTS) — strip them.
+    classify_body = {
+        k: v
+        for k, v in body.items()
+        if k not in {"regime", "regime_score", "all_scores", "tags", "max_pain_delta_pct"}
+    }
+    classify_body["ticker"] = "MSFT"
+
+    r = await http.post(
+        "/engine/market-state", json=classify_body, headers=auth_headers
+    )
+    assert r.status_code == 200, r.text
+    ms = r.json()["market_state"]
+    assert ms["regime"] == "HIGH_IV_PIN"
+    assert "all_scores" in ms
+
+
+async def test_flow_score_smoke(
+    http: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """POST /engine/flow-score returns a V1-contract-complete payload."""
+    chain = _inputs_payload()["chain_snapshot"]
+    body = {
+        "ticker": "MSFT",
+        "chain_snapshot": chain,
+        "spot": 415.0,
+        "expiry_focus": [date(2026, 6, 19).isoformat()],
+        "dte_to_nearest_opex": 30,
+    }
+    r = await http.post("/engine/flow-score", json=body, headers=auth_headers)
+    assert r.status_code == 200, r.text
+    fs = r.json()["flow_score"]
+    for field in (
+        "score", "bullish_score", "bearish_score", "bias",
+        "recommended_action", "pin_probability", "gamma_risk",
+        "gamma_sign", "confidence", "explanation", "breakdown",
+    ):
+        assert field in fs, f"V1 contract field missing: {field}"

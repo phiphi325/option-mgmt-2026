@@ -1,38 +1,51 @@
-"""Engine endpoints — `POST /engine/daily-plan`, `POST /engine/recommend`.
+"""Engine endpoints — read/write surface on the M1.13 pipeline.
 
-Per plan v1.2 §7 + §17 M1.14.
+Per plan v1.2 §7 + §22.14 + §17 M1.14 + M1.15.
 
-Both endpoints require authentication (JWT-decoded user_id). The
+All endpoints require authentication (JWT-decoded user_id). The
 business logic lives in `app.services.decision_service`; this module
 is a thin HTTP-shape layer.
 
-  POST /engine/daily-plan  → DailyDecisionResponse  (200 + persisted row)
-  POST /engine/recommend   → RecommendResponse      (200; no persistence)
+  POST /engine/daily-plan    → DailyDecisionResponse  (200 + persisted row)
+  POST /engine/recommend     → RecommendResponse      (200; no persistence)
+  POST /engine/what-if       → WhatIfResponse         (200; NEVER persists)
+  POST /engine/market-state  → MarketStateResponse    (200; classify() only)
+  POST /engine/flow-score    → FlowScoreResponse      (200; compute() only)
 
-Future endpoints in the same router (M1.15+):
-  POST /engine/what-if         (M1.15; non-persisting variant of daily-plan)
-  POST /engine/market-state    (M1.15; standalone classify())
-  POST /engine/flow-score      (M1.15; standalone compute())
+Future endpoints in the same router (M1.16+):
   POST /engine/strike-candidates (M1.16; standalone select_strikes())
-  POST /engine/execution-check (M1.16; standalone assess())
+  POST /engine/execution-check   (M1.16; standalone assess())
+  POST /engine/collar-builder    (M1.16a; standalone build())
 """
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_authenticated_user_id, get_session
 from app.schemas.decision import (
     DailyDecisionResponse,
     DailyPlanRequest,
+    FlowScoreRequest,
+    FlowScoreResponse,
+    MarketStateRequest,
+    MarketStateResponse,
     RecommendRequest,
     RecommendResponse,
+    WhatIfRequest,
+    WhatIfResponse,
 )
 from app.schemas.engine import decision_to_jsonable_dict
-from app.services.decision_service import produce_and_persist, run_recommend
+from app.services.decision_service import (
+    produce_and_persist,
+    run_flow_score,
+    run_market_state,
+    run_recommend,
+    run_what_if,
+)
 
 router = APIRouter(prefix="/engine", tags=["engine"])
 
@@ -106,3 +119,119 @@ async def recommend_endpoint(
         profile=request.profile,
     )
     return RecommendResponse(recommendation=decision_to_jsonable_dict(rec))
+
+
+# ----------------------------------------------------------------------
+# M1.15 — read-only engine endpoints
+# ----------------------------------------------------------------------
+
+
+@router.post(
+    "/what-if",
+    response_model=WhatIfResponse,
+    summary="Run the Master Decision Engine without persisting (what-if)",
+)
+async def what_if(
+    request: WhatIfRequest,
+    user_id: AuthedUserDep,
+) -> WhatIfResponse:
+    """V1 what-if endpoint per plan §17 M1.15 + §22.14.
+
+    Runs `engine.produce_daily_decision()` against the request's
+    hydrated inputs with optional flat overrides applied to
+    `inputs.market_state` first. NEVER persists — caller can be
+    confident no `daily_decisions` row is written regardless of the
+    response's `inputs_hash`.
+
+    Returns the full `DailyDecision` JSON projection plus an
+    `is_new_row: Literal[False]` discriminant so client code that
+    handles `DailyDecisionResponse` can also handle this shape.
+    """
+    # `user_id` is required for auth + future rate limiting; ack via _.
+    _ = user_id
+
+    try:
+        decision = run_what_if(
+            ticker=request.ticker,
+            as_of=request.as_of,
+            inputs=request.inputs,
+            overrides=request.overrides,
+        )
+    except ValueError as exc:
+        # Unknown override key — surface as 422 with the key list rather
+        # than a 500 from a downstream model_copy ValidationError.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return WhatIfResponse(decision=decision_to_jsonable_dict(decision))
+
+
+@router.post(
+    "/market-state",
+    response_model=MarketStateResponse,
+    summary="Classify the market regime (no persistence)",
+)
+async def market_state(
+    request: MarketStateRequest,
+    user_id: AuthedUserDep,
+) -> MarketStateResponse:
+    """V1 market-state endpoint per plan §17 M1.15 + §9.2 + §22.3.
+
+    Runs ONLY `engine.market_state.classify()`. No DB, no persistence.
+    Returns the full `MarketStateResult` JSON projection.
+    """
+    _ = user_id  # auth required; rate-limit hook reserved.
+
+    result = run_market_state(
+        spot=request.spot,
+        iv_rank=request.iv_rank,
+        iv_percentile=request.iv_percentile,
+        hv_30=request.hv_30,
+        expected_move_pct=request.expected_move_pct,
+        max_pain=request.max_pain,
+        pcr_volume=request.pcr_volume,
+        pcr_oi=request.pcr_oi,
+        trend_strength=request.trend_strength,
+        realized_vs_implied=request.realized_vs_implied,
+        breakout_signal=request.breakout_signal,
+        oi_concentration_at_max_pain=request.oi_concentration_at_max_pain,
+        days_to_next_event=request.days_to_next_event,
+        next_event_kind=request.next_event_kind,
+        days_since_event=request.days_since_event,
+        days_to_nearest_opex=request.days_to_nearest_opex,
+        iv_rank_change_1d=request.iv_rank_change_1d,
+        gap_pct=request.gap_pct,
+    )
+    return MarketStateResponse(market_state=decision_to_jsonable_dict(result))
+
+
+@router.post(
+    "/flow-score",
+    response_model=FlowScoreResponse,
+    summary="Compute the V1 Flow Score (no persistence)",
+)
+async def flow_score(
+    request: FlowScoreRequest,
+    user_id: AuthedUserDep,
+) -> FlowScoreResponse:
+    """V1 flow-score endpoint per plan §17 M1.15 + §9.3a.
+
+    Runs ONLY `engine.flow_score.compute()`. No DB, no persistence.
+    Returns the LOCKED V1 `FlowScore` contract (§22.2).
+    """
+    _ = user_id
+
+    try:
+        score = run_flow_score(
+            chain_snapshot=request.chain_snapshot,
+            spot=request.spot,
+            expiry_focus=request.expiry_focus,
+            dte_to_nearest_opex=request.dte_to_nearest_opex,
+            risk_free_rate=request.risk_free_rate,
+            dividend_yield=request.dividend_yield,
+        )
+    except ValueError as exc:
+        # Engine raises ValueError on invalid inputs (e.g. no contracts
+        # at any focus expiry). Surface as 422 with the engine's message.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return FlowScoreResponse(flow_score=decision_to_jsonable_dict(score))
