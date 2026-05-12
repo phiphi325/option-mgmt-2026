@@ -11,9 +11,9 @@ from engine.collar_builder import (
 )
 
 
-def test_engine_version_bumped_to_1_5_0() -> None:
-    """M1.11a is the version 1.5.0 bump per dev spec."""
-    assert engine.__version__ == "1.5.0"
+def test_engine_version_bumped_to_1_6_0() -> None:
+    """M1.11b is the version 1.6.0 bump per dev spec (M1.11a was the 1.5.0 bump)."""
+    assert engine.__version__ == "1.6.0"
 
 
 def test_collar_builder_types_exported_via_engine_namespace() -> None:

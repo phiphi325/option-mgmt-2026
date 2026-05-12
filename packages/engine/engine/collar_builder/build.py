@@ -47,6 +47,8 @@ def build(
     horizon_days: int | None = None,
     coverage_ratio: float | None = None,
     weights: Weights | None = None,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
 ) -> list[CollarStructure]:
     """Build ranked collar candidates per master plan §9.10.
 
@@ -134,6 +136,8 @@ def build(
                 flow_score=flow_score,
                 expirations=expirations,
                 weights=resolved_weights,
+                risk_free_rate=risk_free_rate,
+                dividend_yield=dividend_yield,
             )
         elif intent is CollarIntent.INCOME:
             result = solve_income(
@@ -145,6 +149,8 @@ def build(
                 flow_score=flow_score,
                 expirations=expirations,
                 weights=resolved_weights,
+                risk_free_rate=risk_free_rate,
+                dividend_yield=dividend_yield,
             )
         elif intent is CollarIntent.DEFENSIVE:
             result = solve_defensive(
@@ -156,6 +162,8 @@ def build(
                 flow_score=flow_score,
                 expirations=expirations,
                 weights=resolved_weights,
+                risk_free_rate=risk_free_rate,
+                dividend_yield=dividend_yield,
             )
         else:
             # Unreachable for the StrEnum, but mypy requires the branch.

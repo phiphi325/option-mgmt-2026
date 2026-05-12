@@ -32,6 +32,8 @@ from engine.confidence.types import ConfidenceInputs, Weights
 from engine.execution.assess import assess
 from engine.execution.types import Execution
 from engine.flow_score.types import FlowScore
+from engine.greeks import delta as bs_delta
+from engine.greeks import time_to_expiry_years
 from engine.market_state.classify import MarketStateResult
 from engine.profiles import UserStrategyProfile
 from engine.regimes import Regime
@@ -60,7 +62,12 @@ INTENT_TARGET_CALL_DELTA: dict[CollarIntent, float] = {
     CollarIntent.INCOME: 0.35,
     CollarIntent.DEFENSIVE: 0.20,
 }
-DELTA_BAND_WIDTH = 0.10  # ±0.05 around the target
+# Band width widened from 0.10 → 0.15 in M1.11b to absorb realistic
+# Black-Scholes-vs-proxy delta variance (typically 5–10% per strike).
+# The dispatcher in `decision.produce()` now threads BS deltas via
+# `engine.greeks.delta()` (M1.11b recommendation #1); a 0.10 band was
+# too tight to admit pairs whose BS delta straddled the boundary.
+DELTA_BAND_WIDTH = 0.15  # ±0.075 around the target
 
 # Per-intent constraints (per plan §9.10).
 ZERO_COST_TOLERANCE = 0.10
@@ -68,12 +75,51 @@ INCOME_MIN_CAPPED_UPSIDE_PCT = 0.04
 DEFENSIVE_MAX_DEBIT_PCT = 0.005
 
 
-def _approx_delta(contract: OptionContract, spot: float) -> float:
-    """Moneyness-based proxy for delta when the chain doesn't publish it.
+def _estimate_delta(
+    contract: OptionContract,
+    spot: float,
+    as_of: date,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
+) -> float:
+    """Estimate the signed delta for a chain contract.
 
-    Rough but monotone — used only when callers don't supply explicit
-    deltas. Calls in (0.01, 0.99); puts in (-0.99, -0.01).
+    M1.11b recommendation #1: when the contract carries an `iv` and the
+    chain's `as_of` is sane, compute the Black-Scholes delta via
+    `engine.greeks.delta()`. Fall back to a moneyness-monotone proxy
+    when IV is absent (e.g. chain feeds that publish only quotes).
+
+    The proxy is intentionally crude (off by 5–15% vs BS for typical
+    MSFT IV) but preserves ordering — so band membership is still
+    monotone in strike. The proxy + the widened DELTA_BAND_WIDTH (M1.11b)
+    keep V1 fixture tests stable even when iv is omitted.
     """
+    if contract.iv is not None and contract.iv > 0:
+        tau = time_to_expiry_years(as_of=as_of, expiry=contract.expiry)
+        return bs_delta(
+            spot=spot,
+            strike=contract.strike,
+            tau=tau,
+            iv=contract.iv,
+            r=risk_free_rate,
+            q=dividend_yield,
+            option_type=contract.option_type,
+        )
+    # Fallback proxy — used when iv is absent. Calls in (0.01, 0.99);
+    # puts in (-0.99, -0.01).
+    if contract.option_type is OptionType.CALL:
+        moneyness = (spot - contract.strike) / spot
+        return max(0.01, min(0.99, 0.5 + 4.0 * moneyness))
+    moneyness = (contract.strike - spot) / spot
+    return -max(0.01, min(0.99, 0.5 + 4.0 * moneyness))
+
+
+# M1.11a-era alias preserved for backward compatibility of any caller
+# that imported the V1 proxy directly. New code should call
+# `_estimate_delta()` so the BS path is used when IV is available.
+def _approx_delta(contract: OptionContract, spot: float) -> float:
+    """Backward-compat shim — pre-M1.11b proxy. New code should call
+    `_estimate_delta()` so Black-Scholes is used when IV is present."""
     if contract.option_type is OptionType.CALL:
         moneyness = (spot - contract.strike) / spot
         return max(0.01, min(0.99, 0.5 + 4.0 * moneyness))
@@ -107,9 +153,14 @@ def _filter_calls_for_intent(
     expiry: date,
     spot: float,
     intent: CollarIntent,
+    *,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
 ) -> list[tuple[OptionContract, float]]:
-    """Return `(contract, signed_delta)` for OTM calls whose proxy
-    delta falls within the intent's target band."""
+    """Return `(contract, signed_delta)` for OTM calls whose delta
+    falls within the intent's target band. Uses Black-Scholes deltas
+    via `_estimate_delta()` when the chain publishes IV (M1.11b);
+    falls back to the moneyness proxy otherwise."""
     target = INTENT_TARGET_CALL_DELTA[intent]
     lower = target - DELTA_BAND_WIDTH / 2.0
     upper = target + DELTA_BAND_WIDTH / 2.0
@@ -119,7 +170,7 @@ def _filter_calls_for_intent(
             continue
         if c.strike <= spot:
             continue
-        d = _approx_delta(c, spot)
+        d = _estimate_delta(c, spot, chain.as_of, risk_free_rate, dividend_yield)
         if lower <= d <= upper:
             out.append((c, d))
     return out
@@ -131,9 +182,13 @@ def _filter_puts_for_intent(
     spot: float,
     intent: CollarIntent,
     profile: UserStrategyProfile,
+    *,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
 ) -> list[tuple[OptionContract, float]]:
     """Return `(contract, signed_delta)` for OTM puts that meet the
-    intent's minimum downside protection."""
+    intent's minimum downside protection. Uses Black-Scholes deltas
+    via `_estimate_delta()` when IV is published (M1.11b)."""
     if intent is CollarIntent.INCOME:
         min_protection = profile.drawdown_tolerance / 2.0
     else:
@@ -147,7 +202,7 @@ def _filter_puts_for_intent(
         protected_pct = (spot - c.strike) / spot
         if protected_pct < min_protection:
             continue
-        d = _approx_delta(c, spot)
+        d = _estimate_delta(c, spot, chain.as_of, risk_free_rate, dividend_yield)
         out.append((c, d))
     return out
 
@@ -440,15 +495,21 @@ def solve_zero_cost(
     flow_score: FlowScore,
     expirations: Iterable[date],
     weights: Weights,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
 ) -> CollarStructure | None:
     """Find the pair with `|net_debit_credit| ≤ ZERO_COST_TOLERANCE`.
     Tie-break by tie-break score."""
     best: CollarStructure | None = None
     best_residual = float("inf")
     for exp in expirations:
-        calls = _filter_calls_for_intent(chain, exp, spot, CollarIntent.ZERO_COST)
+        calls = _filter_calls_for_intent(
+            chain, exp, spot, CollarIntent.ZERO_COST,
+            risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
+        )
         puts = _filter_puts_for_intent(
-            chain, exp, spot, CollarIntent.ZERO_COST, profile
+            chain, exp, spot, CollarIntent.ZERO_COST, profile,
+            risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
         )
         for call_contract, call_delta in calls:
             call_mid = _mid_of(call_contract)
@@ -497,6 +558,8 @@ def solve_income(
     flow_score: FlowScore,
     expirations: Iterable[date],
     weights: Weights,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
 ) -> CollarStructure | None:
     """Find the pair that maximizes net credit (most-negative
     `net_debit_credit`) subject to:
@@ -507,9 +570,13 @@ def solve_income(
     best: CollarStructure | None = None
     best_credit = 0.0
     for exp in expirations:
-        calls = _filter_calls_for_intent(chain, exp, spot, CollarIntent.INCOME)
+        calls = _filter_calls_for_intent(
+            chain, exp, spot, CollarIntent.INCOME,
+            risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
+        )
         puts = _filter_puts_for_intent(
-            chain, exp, spot, CollarIntent.INCOME, profile
+            chain, exp, spot, CollarIntent.INCOME, profile,
+            risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
         )
         for call_contract, call_delta in calls:
             for put_contract, put_delta in puts:
@@ -554,6 +621,8 @@ def solve_defensive(
     expirations: Iterable[date],
     weights: Weights,
     position_notional: float | None = None,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
 ) -> CollarStructure | None:
     """Find the pair that maximizes `protected_downside_pct` subject
     to `net_debit ≤ DEFENSIVE_MAX_DEBIT_PCT * position_notional`
@@ -567,9 +636,13 @@ def solve_defensive(
     best: CollarStructure | None = None
     best_protection = 0.0
     for exp in expirations:
-        calls = _filter_calls_for_intent(chain, exp, spot, CollarIntent.DEFENSIVE)
+        calls = _filter_calls_for_intent(
+            chain, exp, spot, CollarIntent.DEFENSIVE,
+            risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
+        )
         puts = _filter_puts_for_intent(
-            chain, exp, spot, CollarIntent.DEFENSIVE, profile
+            chain, exp, spot, CollarIntent.DEFENSIVE, profile,
+            risk_free_rate=risk_free_rate, dividend_yield=dividend_yield,
         )
         for call_contract, call_delta in calls:
             for put_contract, put_delta in puts:

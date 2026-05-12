@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from engine.collar_builder.types import CollarStructure
 from engine.confidence.types import ConfidenceBreakdown
 from engine.execution.downgrade import DowngradeResult
 from engine.execution.types import Execution
@@ -128,3 +129,11 @@ class DailyDecision:
     data_freshness: tuple[tuple[str, int | float | bool], ...] = ()
     disclaimers: tuple[str, ...] = ()
     escalated: bool = False
+    # M1.11b: parallel to strike_selections / executions. For non-collar
+    # actions this slot is None; for OPEN_COLLAR emits it carries the
+    # resolved CollarStructure (long-put + short-call + pair-level P&L
+    # fields + confidence_breakdown). Length invariant:
+    #   len(collar_structures) == len(strike_selections) when populated.
+    # Default `()` preserves backward-compat for any test fixtures or
+    # replay logs that pre-date M1.11b (length is allowed to be 0).
+    collar_structures: tuple[CollarStructure | None, ...] = ()
