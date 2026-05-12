@@ -3,7 +3,7 @@
 Two complementary doc styles live under this folder:
 
 1. **Engine-layer tutorials** (original set, M1.4–M1.13) — long-form pedagogical material targeting first-year master's students in financial engineering. They teach *why* the engine makes the decisions it does. ~50–75 min careful read each.
-2. **API-layer references** (new with M1.16) — developer-facing reference docs covering *how* to call the engine via HTTP. Shorter, JSON-heavy, organized around endpoints rather than financial concepts. ~35 min careful read.
+2. **API-layer references** (introduced with M1.16, broadened in M1.17.5) — developer-facing reference docs covering *how* to call the API via HTTP. JSON-heavy, organized around endpoints rather than financial concepts. ~50 min careful read.
 
 Both styles are deliberately deeper than the auto-generated OpenAPI spec — they cover financial fundamentals (engine layer) and end-to-end client workflows (API layer) that a course instructor or onboarding engineer would want as assigned reading.
 
@@ -21,7 +21,7 @@ Both styles are deliberately deeper than the auto-generated OpenAPI spec — the
 
 | Tutorial | Audience | Reading time | Covers |
 |---|---|---|---|
-| [engine-api-reference.md](./engine-api-reference.md) | Full-stack engineers integrating against the engine HTTP surface; PR reviewers for the M1.14–M1.16 endpoint work | ~35 min careful read · ~15 min skim | All seven currently-shipped `/api/v1/engine/*` endpoints (M1.14 `/daily-plan` + `/recommend`; M1.15 `/what-if` + `/market-state` + `/flow-score`; M1.16 `/strike-candidates` + `/execution-check`). Prerequisite: read the [Master Decision Engine](./master-decision-engine.md) tutorial first. |
+| [engine-api-reference.md](./engine-api-reference.md) | Full-stack engineers integrating against the API; PR reviewers for the M1.14–M1.17.5 endpoint work | ~50 min careful read · ~20 min skim | All seventeen public endpoints shipped through M1.17.5: the seven `/engine/*` routes (M1.14 daily-plan + recommend; M1.15 what-if + market-state + flow-score; M1.16 strike-candidates + execution-check), the four `/data/*/import-csv` routes (M1.17), the three `/profile` + `/outcomes` routes (M1.17), `/market/{ticker}/latest` (M1.17), `/health` + `/healthz` + `/version` (M0.3), plus the M1.17.5 optional-inputs hydration path on `/engine/daily-plan`. The file name kept its M1.16-era `engine-api-reference` slug for backward-compat link stability; the doc itself broadened with M1.17. Prerequisite: read the [Master Decision Engine](./master-decision-engine.md) tutorial first. |
 
 ### Reading order
 
@@ -47,14 +47,14 @@ These engine modules are on `main` but don't yet have a pedagogical tutorial. Ad
 
 #### API-layer (endpoints shipped or planned but not yet covered)
 
-- **CSV-import + profile + outcomes** (`/api/v1/{profile, outcomes, data/*}`, M1.17 — not yet shipped). When M1.17 lands, write a companion to `engine-api-reference.md` covering the data-import workflow + how it lights up the "optional `inputs`" path on the engine endpoints.
-- **Today screen client integration** (Next.js consumer of `/engine/daily-plan`, M1.18 — not yet shipped). When M1.18 lands, write a tutorial covering the typed-client patterns (server-component fetch, RFC 7807 error handling, `data_freshness` badge rendering).
+- **CSV-import + profile + outcomes** (`/api/v1/{profile, outcomes, data/*, market/*}`, M1.17 + M1.17.5) — **now covered** in [`engine-api-reference.md` §§12–16](./engine-api-reference.md#12-profile--user-strategy-profile-m117) alongside the engine surface. The file kept its `engine-api-reference` slug for link stability; coverage broadened with M1.17.5.
+- **Today screen client integration** (Next.js consumer of `/engine/daily-plan`, M1.18 — not yet shipped). When M1.18 lands, write a separate tutorial covering the typed-client patterns (server-component fetch, RFC 7807 error handling, `data_freshness` badge rendering). Distinct enough from the API reference (TS vs. JSON) to deserve its own file.
 
 #### Templates
 
 If you're contributing one:
 - For an engine-layer tutorial: follow [`master-decision-engine.md`](./master-decision-engine.md) or [`confidence-composer.md`](./confidence-composer.md) (audience header → TOC → numbered sections → end-to-end worked example → exercises → glossary).
-- For an API-layer reference: follow [`engine-api-reference.md`](./engine-api-reference.md) (same structure but JSON-heavy and endpoint-organized, ~35 min target read).
+- For an API-layer reference: follow [`engine-api-reference.md`](./engine-api-reference.md) (same structure but JSON-heavy and endpoint-organized, ~50 min target read for the full API surface).
 
 ## How tutorials relate to the rest of the docs
 

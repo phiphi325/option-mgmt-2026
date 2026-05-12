@@ -1,9 +1,11 @@
-# Tutorial: Engine API Reference (`/api/v1/engine/*`)
+# Tutorial: API Reference (`/api/v1/*`)
 
-> **Audience.** Full-stack engineers integrating against the engine HTTP surface; first-year master's students who have read the engine-layer tutorials and now want to see how those modules are exposed; reviewers of the M1.14 / M1.15 / M1.16 pull requests.
+> **Audience.** Full-stack engineers integrating against the API; first-year master's students who have read the engine-layer tutorials and now want to see how those modules are exposed; reviewers of the M1.14–M1.17.5 pull requests.
 > **Prerequisites.** Read at least the [Master Decision Engine](./master-decision-engine.md) tutorial first. Familiarity with the upstream engine tutorials ([Market State](./market-state-engine.md), [Flow Score](./flow-score-engine.md), [Confidence Composer](./confidence-composer.md), [Scoring Primitives](./scoring-primitives.md)) is recommended but not strictly required for the API surface alone.
-> **Reading time.** ~35 min careful read with the exercises; ~15 min skim.
-> **Coverage.** All seven engine endpoints shipped through M1.16 (commit [`726ec37`](https://github.com/csupenn/option-mgmt-2026/commit/726ec37f1542083260293b968ef0ee2439757086) on `main`, 2026-05-12). Engine version `1.4.0`; API version stamped on `/version`.
+> **Reading time.** ~50 min careful read with the exercises; ~20 min skim.
+> **Coverage.** All seventeen public endpoints shipped through M1.17.5 — the seven `/engine/*` routes (M1.14–M1.16), the four `/data/*/import-csv` routes (M1.17), the three `/profile` + `/outcomes` routes (M1.17), `/market/{ticker}/latest` (M1.17), `/health` + `/healthz` + `/version` (M0.3), plus the M1.17.5 optional-inputs hydration path on `/engine/daily-plan`. Engine version `1.4.0`; API version stamped on `/version`.
+>
+> **Scope note.** Earlier revisions of this tutorial were titled "Engine API Reference" and covered only `/api/v1/engine/*`. M1.17 + M1.17.5 added enough adjacent surface area (data import, profile, outcomes, market read-through, optional-inputs hydration) that splitting the doc would force readers to chase three files for a workflow that spans one. Title broadened, file path kept for backward-compatible links.
 >
 > **Disclaimer.** This tutorial is **educational material**. The endpoints documented here are decision-support; they do not place trades, do not check broker margin, and do not constitute investment advice. See [`docs/disclaimers.md`](../disclaimers.md).
 
@@ -12,20 +14,25 @@
 ## Table of contents
 
 1. [Why a separate API tutorial?](#1-why-a-separate-api-tutorial)
-2. [The seven endpoints at a glance](#2-the-seven-endpoints-at-a-glance)
+2. [The endpoints at a glance](#2-the-endpoints-at-a-glance)
 3. [Authentication](#3-authentication)
 4. [Error envelope (RFC 7807)](#4-error-envelope-rfc-7807)
-5. [`POST /engine/daily-plan` — the primary endpoint (M1.14)](#5-post-enginedaily-plan--the-primary-endpoint-m114)
+5. [`POST /engine/daily-plan` — the primary endpoint (M1.14, optional-inputs M1.17.5)](#5-post-enginedaily-plan--the-primary-endpoint-m114-optional-inputs-m1175)
 6. [`POST /engine/recommend` — rule pipeline only (M1.14)](#6-post-enginerecommend--rule-pipeline-only-m114)
 7. [`POST /engine/what-if` — transient evaluation (M1.15)](#7-post-enginewhat-if--transient-evaluation-m115)
 8. [The four sub-step endpoints (M1.15 + M1.16)](#8-the-four-sub-step-endpoints-m115--m116)
 9. [Idempotency, replay, and the three-pin lock](#9-idempotency-replay-and-the-three-pin-lock)
 10. [The V1 hydration story](#10-the-v1-hydration-story)
 11. [End-to-end worked example](#11-end-to-end-worked-example)
-12. [Plan deviations](#12-plan-deviations)
-13. [Hands-on exercises](#13-hands-on-exercises)
-14. [Further reading](#14-further-reading)
-15. [Glossary](#15-glossary)
+12. [`/profile` — user strategy profile (M1.17)](#12-profile--user-strategy-profile-m117)
+13. [`/outcomes` — manual outcome tracking (M1.17)](#13-outcomes--manual-outcome-tracking-m117)
+14. [`/data/*/import-csv` — five CSV upload endpoints (M1.17)](#14-dataimport-csv--five-csv-upload-endpoints-m117)
+15. [`GET /market/{ticker}/latest` — convenience read-through (M1.17)](#15-get-marketticker-latest--convenience-read-through-m117)
+16. [The M1.17.5 hydration path — how `inputs` becomes optional](#16-the-m1175-hydration-path--how-inputs-becomes-optional)
+17. [Plan deviations](#17-plan-deviations)
+18. [Hands-on exercises](#18-hands-on-exercises)
+19. [Further reading](#19-further-reading)
+20. [Glossary](#20-glossary)
 
 ---
 
@@ -60,11 +67,13 @@ Pure-function discipline (ADR-0005) means the engine layer never touches the DB,
 
 ---
 
-## 2. The seven endpoints at a glance
+## 2. The endpoints at a glance
+
+### Engine endpoints (M1.14 – M1.16)
 
 | Endpoint | Milestone | Wraps | Persists? | Auth |
 |---|---|---|---|---|
-| `POST /engine/daily-plan` | M1.14 | `engine.produce_daily_decision()` | Yes (idempotent via `ON CONFLICT`) | Required |
+| `POST /engine/daily-plan` | M1.14 / M1.17.5 | `engine.produce_daily_decision()` | Yes (idempotent via `ON CONFLICT`) | Required |
 | `POST /engine/recommend` | M1.14 | `engine.recommend()` | No | Required |
 | `POST /engine/what-if` | M1.15 | `engine.produce_daily_decision()` | **Never** (§22.14) | Required |
 | `POST /engine/market-state` | M1.15 | `engine.market_state.classify()` | No | Required |
@@ -72,20 +81,39 @@ Pure-function discipline (ADR-0005) means the engine layer never touches the DB,
 | `POST /engine/strike-candidates` | M1.16 | `engine.strike_selector.select_strikes()` | No | Required |
 | `POST /engine/execution-check` | M1.16 | `engine.execution.assess()` | No | Required |
 
-Two of the eight §7 sub-step endpoints are still pending:
+`POST /engine/collar-builder` (M1.16a, master plan v1.1) is still pending — blocked on the M1.11a Collar Builder engine module, which hasn't shipped to `main` yet. Once it lands, all of §7 will be HTTP-reachable.
 
-- `POST /engine/collar-builder` (M1.16a) — blocked on M1.11a engine module.
-- `GET /market/msft/latest` (M1.16b) — deferred until M1.17 lands the CSV-import path that feeds it.
+### Data + profile + outcomes endpoints (M1.17)
 
-Once both ship, all of §7 is HTTP-reachable.
+| Endpoint | Wraps | Persists? | Auth |
+|---|---|---|---|
+| `GET /profile` | `users.strategy_profile` JSONB | n/a (read) | Required |
+| `PUT /profile` | `users.strategy_profile` JSONB | Yes (full replace) | Required |
+| `GET /outcomes?since=&limit=&cursor=` | `outcomes` (cursor-paginated) | n/a (read) | Required |
+| `POST /outcomes` | `outcomes` INSERT | Yes (409 on duplicate `daily_decision_id`) | Required |
+| `PATCH /outcomes/{outcome_id}` | `outcomes` partial UPDATE | Yes | Required |
+| `POST /data/positions/import-csv` | `positions` UPSERT | Yes (idempotent on `(user_id, ticker, opened_at)`) | Required |
+| `POST /data/option-positions/import-csv` | `option_positions` UPSERT | Yes (idempotent on 7-tuple) | Required |
+| `POST /data/chain/import-csv` | `option_chain_snapshots` APPEND | Yes (dedupes on exact match) | Required |
+| `POST /data/iv/import-csv` | `iv_history` UPSERT | Yes; rejects (§22.12) if final count < 30 rows | Required |
+| `POST /data/events/import-csv` | `events` INSERT | Yes (dedupes on `(ticker, kind, scheduled_at, source)`) | Required |
+| `GET /market/{ticker}/latest` | DB read-through (§22.10) | No | Public (no auth) |
 
-### 2.1 Mental model — primary vs. transient vs. drill-down
+### System endpoints (M0.3)
 
-The seven endpoints fall into three categories:
+| Endpoint | Returns | Auth |
+|---|---|---|
+| `GET /health` | `{status, uptime_seconds, db, version, engine_version, weights_version}` | Public |
+| `GET /healthz` | Alias of `/health` (k8s convention) | Public |
+| `GET /version` | `{version, engine_version, weights_version, git_sha}` | Public |
+
+### 2.1 Mental model — five categories
+
+The endpoints fall into five categories. The first three are the engine surface; the last two are the data + system surface.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  PRIMARY (persists)                                     │
+│  PRIMARY (engine; persists)                             │
 │    /engine/daily-plan      ← user's daily ritual        │
 └─────────────────────────────────────────────────────────┘
 
@@ -102,7 +130,22 @@ The seven endpoints fall into three categories:
 │    /engine/strike-candidates ← select_strikes() only    │
 │    /engine/execution-check ← assess() only              │
 └─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│  DATA (CRUD on user-owned + ingested rows)              │
+│    /profile                ← strategy preferences       │
+│    /outcomes               ← manual outcome tracking    │
+│    /data/*/import-csv      ← 5 CSV upload endpoints     │
+│    /market/{ticker}/latest ← convenience read-through   │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│  SYSTEM (operational; no auth)                          │
+│    /health, /healthz, /version                          │
+└─────────────────────────────────────────────────────────┘
 ```
+
+The PRIMARY + TRANSIENT + DRILL-DOWN categories are documented in §§5–8 below. The DATA category is documented in §§12–15. The SYSTEM category is intentionally brief — `/health` and `/version` return the obvious shape and are skipped in this tutorial.
 
 Today-screen UI calls **primary** on the user's daily visit. Today-screen drill-down panels (under "Why" / "Risks" / "Invalidation") call the **drill-down** group to show the user what each engine sub-step contributed. The **transient** group is for backtesting, scenario play, and the Phase 4 ML calibration harness.
 
@@ -199,11 +242,15 @@ The detail string is FastAPI's auto-generated message. Clients should parse it h
 
 ---
 
-## 5. `POST /engine/daily-plan` — the primary endpoint (M1.14)
+## 5. `POST /engine/daily-plan` — the primary endpoint (M1.14, optional-inputs M1.17.5)
 
 The headline endpoint. Runs the full Master Decision Engine and (by default) persists a `daily_decisions` row.
 
-### 5.1 Request
+As of M1.17.5, **`inputs` is OPTIONAL**. When omitted, the API service hydrates `EngineInputs` from the latest DB rows (positions / option_chain_snapshots / iv_history / hv_history / events / users.strategy_profile) and reproduces the upstream engine pipeline (`market_state.classify` + `flow_score.compute`) server-side. Full hydration semantics live in §16.
+
+### 5.1 Request (two shapes)
+
+**Shape A — fully hydrated (M1.14 path, still supported):**
 
 ```json
 {
@@ -220,11 +267,23 @@ The headline endpoint. Runs the full Master Decision Engine and (by default) per
 }
 ```
 
+**Shape B — DB-hydrated (M1.17.5, recommended for live use):**
+
+```json
+{
+  "ticker": "MSFT",
+  "as_of": "2026-05-20T14:30:00Z",
+  "persist": true
+}
+```
+
+When `inputs` is omitted, the service hydrates from DB. The 422 cases for missing prerequisites are documented in §16.
+
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `ticker` | `str` (1–10 chars) | `"MSFT"` | MSFT-only in V1; reserved for multi-ticker post-M4.11. |
 | `as_of` | ISO 8601 datetime | server `now(UTC)` | Decision timestamp. Pinned for replay. |
-| `inputs` | `EngineInputs` | required | Full hydrated bundle. See §10 for the V1 hydration story. |
+| `inputs` | `EngineInputs | null` | **optional as of M1.17.5** | Full hydrated bundle. When `null` or omitted, the service hydrates from DB (§16). |
 | `inputs.chain_snapshot` | `ChainSnapshot` | required | Frozen option chain with `spot`, `as_of`, `contracts: tuple[OptionContract, ...]`. |
 | `inputs.positions` | `PositionStateModel` | required | User's current MSFT shares + option positions. |
 | `inputs.profile` | `UserStrategyProfile` | required | Risk tolerance, coverage cap, delta band, DTE band, etc. |
@@ -873,7 +932,378 @@ Same answers, one round-trip, one persisted row. The drill-down endpoints exist 
 
 ---
 
-## 12. Plan deviations
+## 12. `/profile` — user strategy profile (M1.17)
+
+The user's `UserStrategyProfile` controls how the engine interprets their preferences: which short-premium thresholds apply, what coverage cap to respect, whether collars are preferred over covered calls, and so on. The profile lives in the `users.strategy_profile` JSONB column (created in M0.2) and is hydrated into the engine on every `/engine/daily-plan` call.
+
+### 12.1 `GET /profile`
+
+```bash
+$ curl -X GET $API/profile -H "Authorization: Bearer $JWT"
+{
+  "risk_tolerance": "moderate",
+  "income_need": "medium",
+  "max_position_pct": 0.50,
+  "max_coverage_pct": 0.75,
+  "min_iv_rank_for_short_premium": 40,
+  "prefer_collars_over_covered_calls": false,
+  "drawdown_tolerance": 0.15,
+  "style": "balanced"
+}
+```
+
+Always returns 200. A fresh user with no customizations gets the defaults (moderate / medium / 50% position / 75% coverage / 40 IV-rank threshold / balanced) rather than 404 — the engine needs a profile to function, and defaults are the sensible fallback.
+
+### 12.2 `PUT /profile`
+
+Full replacement (PUT semantics, not PATCH). The request body must contain all fields:
+
+```bash
+$ curl -X PUT $API/profile \
+    -H "Authorization: Bearer $JWT" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "risk_tolerance": "conservative",
+      "income_need": "high",
+      "max_position_pct": 0.30,
+      "max_coverage_pct": 0.90,
+      "min_iv_rank_for_short_premium": 60,
+      "prefer_collars_over_covered_calls": true,
+      "drawdown_tolerance": 0.08,
+      "style": "income"
+    }'
+```
+
+200 returns the persisted profile (echo of input on success). 422 on Pydantic validation failure — typos and out-of-range values are caught at the API boundary.
+
+### 12.3 The strictness wrinkle — `extra="forbid"` at the API boundary
+
+The engine's `UserStrategyProfile` model deliberately allows unknown fields (forward-compat policy — a future engine can add new fields without breaking existing payloads). The API's `ProfileUpdateRequest` overrides this with `extra="forbid"`. The reason is API UX: a PUT with `max_postion_pct: 0.25` (typo) would silently drop the field if extras were allowed, and the user's intended update would silently fail. Surfacing 422 with the offending key listed is dramatically better.
+
+```bash
+$ curl -X PUT $API/profile \
+    -H "Authorization: Bearer $JWT" \
+    -d '{ /* … */ "max_postion_pct": 0.25 }'
+{ "type": "about:blank", "title": "Validation error", "status": 422,
+  "detail": "1 validation error for ProfileUpdateRequest\nmax_postion_pct\n  Extra inputs are not permitted ..." }
+```
+
+The deviation between API-strict and engine-permissive is documented in `app/schemas/profile.py`.
+
+### 12.4 §9.9 validation rules
+
+Pydantic enforces all §9.9 numeric ranges + enum membership at request parse time:
+
+- `max_position_pct ∈ [0, 1]`
+- `max_coverage_pct ∈ [0, 1]`
+- `min_iv_rank_for_short_premium ∈ [0, 100]`
+- `drawdown_tolerance ∈ [0, 1]`
+- `risk_tolerance ∈ {"conservative", "moderate", "aggressive"}`
+- `income_need ∈ {"low", "medium", "high"}`
+- `style ∈ {"income", "balanced", "growth"}`
+
+Out-of-range or invalid-enum values surface as 422 before the route handler runs.
+
+---
+
+## 13. `/outcomes` — manual outcome tracking (M1.17)
+
+Outcomes implement the §9.10 learning-loop's Phase-1 manual path: after a decision plays out, the user records what actually happened (PnL realized, decision quality, error category if any, the regime that actually materialized). Each outcome row links 1:1 to a `daily_decisions` row via FK + UNIQUE.
+
+In Phase 3, M3.5 will auto-fill outcomes from price history. For now they're manual entries.
+
+### 13.1 `GET /outcomes?since=&limit=&cursor=`
+
+Cursor-paginated list. Filtered to outcomes owned by the authenticated user transitively via `daily_decisions.user_id`.
+
+```bash
+$ curl -X GET "$API/outcomes?limit=20" -H "Authorization: Bearer $JWT"
+{
+  "outcomes": [
+    {
+      "id": "...",
+      "daily_decision_id": "...",
+      "evaluated_at": "2026-05-27T14:00:00Z",
+      "horizon_days": 7,
+      "pnl_realized": "1250.00",
+      "pnl_unrealized": null,
+      "decision_quality": "good",
+      "error_type": "none",
+      "actual_regime_realized": "HIGH_IV_PIN",
+      "regime_match": true,
+      "notes": "covered call expired worthless; collected full premium",
+      "source": "manual"
+    }
+  ],
+  "next_cursor": "eyJldmFsdWF0ZWRfYXQi..."
+}
+```
+
+| Query param | Meaning | Default | Range |
+|---|---|---|---|
+| `since` | ISO 8601; filter out older outcomes | none | — |
+| `limit` | page size | `50` | `[1, 200]` |
+| `cursor` | opaque, from previous response's `next_cursor` | none | — |
+
+The cursor is base64-encoded `{"evaluated_at": ISO, "id": UUID}` of the last row in the previous page. Treat it as **opaque** — server-side encoding can change without notice. Ordering is `(evaluated_at DESC, id DESC)` for stable cursors under same-second ties.
+
+### 13.2 `POST /outcomes` — create
+
+```bash
+$ curl -X POST $API/outcomes \
+    -H "Authorization: Bearer $JWT" \
+    -d '{
+      "daily_decision_id": "dd_a1b2c3d4e5f6_1748530200",
+      "horizon_days": 7,
+      "pnl_realized": "1250.00",
+      "decision_quality": "good",
+      "error_type": "none",
+      "actual_regime_realized": "HIGH_IV_PIN",
+      "regime_match": true,
+      "notes": "covered call expired worthless"
+    }'
+```
+
+| Status | When |
+|---|---|
+| `201` | Inserted; body is the persisted outcome |
+| `404` | `daily_decision_id` doesn't exist OR doesn't belong to the authenticated user. The 404 is intentionally ambiguous — we don't leak which decisions exist for other users (§15 security posture). |
+| `409` | An outcome for this `daily_decision_id` already exists. The UNIQUE constraint lives in the table (0001_init); the service catches the ON CONFLICT and maps to 409 rather than letting it bubble up as a 500 IntegrityError. |
+
+The `source` field is server-set to `"manual"` and is not accepted in the request body. The `"auto"` source is reserved for the M3.5 auto-fill path.
+
+### 13.3 `PATCH /outcomes/{outcome_id}` — partial update
+
+```bash
+$ curl -X PATCH $API/outcomes/abc-... \
+    -H "Authorization: Bearer $JWT" \
+    -d '{ "pnl_realized": "1340.00", "notes": "updated after settlement" }'
+```
+
+Only fields present in the body are updated. Omitted fields stay at their persisted values. Same 404 contract as POST — cross-user access doesn't leak existence.
+
+`source` is immutable after insert (manual stays manual; M3.5 auto-fill happens via a separate code path, not by patching an existing manual outcome).
+
+---
+
+## 14. `/data/*/import-csv` — five CSV upload endpoints (M1.17)
+
+Five endpoints, one per CSV resource per master plan §10. All use `multipart/form-data` with a single `file` field and return the same shape:
+
+```json
+{
+  "inserted": 0,
+  "updated": 0,
+  "skipped": 0,
+  "errors": [
+    { "line": 5, "column": "kind", "message": "must be PUT or CALL; got 'BANANA'" }
+  ],
+  "validation_warnings": []
+}
+```
+
+Per-row errors are reported in `errors[]` with 1-indexed line numbers (line 1 = header). The upload doesn't fail wholesale on a single bad row — good rows are inserted, bad rows are skipped, and the caller decides what to do with the report.
+
+### 14.1 The 5 endpoints + idempotency strategies
+
+| Endpoint | Idempotency | What happens on re-upload |
+|---|---|---|
+| `POST /data/positions/import-csv` | UPSERT on `(user_id, ticker, opened_at)` | Same lot opening → update `qty` + `avg_cost`; counts as `updated` |
+| `POST /data/option-positions/import-csv` | UPSERT on 7-tuple `(user_id, ticker, side, kind, strike, expiry, opened_at)` | Same leg-opening event → update `qty` / `opened_price` / `status` |
+| `POST /data/chain/import-csv` | Append-only with exact-match dedupe | Exact-match `(ticker, fetched_at, expiry, strike, kind)` → skip |
+| `POST /data/iv/import-csv` | UPSERT on `(ticker, ts)` PK | Same date row → update OHLC + iv_rank/iv_percentile |
+| `POST /data/events/import-csv` | Dedupe at upload on `(ticker, kind, scheduled_at, source)` | Exact-match → skip |
+
+The composite UNIQUE constraints powering the first two upserts live in migration `0003_imp_unique_constraints`. The `iv_history` PK comes from `0001_init`. The other two tables don't have DB-level UNIQUE; deduplication happens at the application layer.
+
+### 14.2 Canonical CSV headers (§10)
+
+```
+positions.csv          ticker,qty,avg_cost,opened_at
+option_positions.csv   ticker,side,kind,strike,expiry,qty,opened_at,opened_price,status
+chain.csv              ticker,fetched_at,expiry,strike,kind,bid,ask,last,oi,volume,iv,delta,gamma,theta,vega
+iv_history.csv         ticker,ts,atm_iv_30d,iv_rank,iv_percentile,hv_30,high,low,close
+events.csv             ticker,kind,scheduled_at,source,notes
+```
+
+Bytes-on-the-wire example:
+
+```bash
+$ cat positions.csv
+ticker,qty,avg_cost,opened_at
+MSFT,5000,400.12,2025-08-15T00:00:00Z
+
+$ curl -X POST $API/data/positions/import-csv \
+    -H "Authorization: Bearer $JWT" \
+    -F "file=@positions.csv"
+{ "inserted": 1, "updated": 0, "skipped": 0, "errors": [], "validation_warnings": [] }
+
+# Re-upload the same file → 0 inserted, 1 updated (idempotent)
+$ curl -X POST $API/data/positions/import-csv \
+    -H "Authorization: Bearer $JWT" \
+    -F "file=@positions.csv"
+{ "inserted": 0, "updated": 1, "skipped": 0, "errors": [], "validation_warnings": [] }
+```
+
+### 14.3 §22.12 — IV history row-count validation
+
+`POST /data/iv/import-csv` is the only CSV endpoint that runs a post-insert validation. After all rows are inserted/updated, the service counts the rows for each touched ticker and:
+
+- **< 30 rows** → the entire upload is **rolled back** and the endpoint returns **422 `insufficient_iv_history`**. The engine's `iv_rank` and `iv_percentile` math is unreliable below 30 days.
+- **30 ≤ count < 60** → upload succeeds with **200** but a soft warning lands in `validation_warnings[]` ("iv_percentile less reliable with <60 days").
+- **60 ≤ count < 252** → upload succeeds with an info-level warning.
+- **≥ 252 rows** → no warning.
+
+The 422 case rolls back the transaction so a partially-uploaded ticker never leaves the DB in a sub-30-row state.
+
+### 14.4 File size limit
+
+V1 caps uploads at **10 MB** per file. Above that → HTTP 413 with `"file exceeds 10 MB limit"`. Production deployments can raise the cap by tuning `_MAX_FILE_BYTES` in `routers/data_import.py`. M2+ ingestion (provider abstraction) bypasses CSV entirely; this cap is a V1 protective measure.
+
+---
+
+## 15. `GET /market/{ticker}/latest` — convenience read-through (M1.17)
+
+A **public** (no auth) endpoint that returns the most-recent market state for a ticker, built by reading the latest `option_chain_snapshots` + `iv_history` + `hv_history` + `events` rows and computing `max_pain` / `pcr_volume` / `pcr_oi` / `expected_move_pct` on-the-fly via engine primitives.
+
+Per master plan §22.10. The endpoint does NOT invoke the engine pipeline — it's a thin read-through powering the Today screen's header and external integrations that want raw market context without a full `DailyDecision`.
+
+```bash
+$ curl -X GET $API/market/MSFT/latest
+{
+  "as_of": "2026-05-20T14:30:00Z",
+  "ticker": "MSFT",
+  "spot": "415.0",
+  "iv_rank": 0.65,
+  "iv_percentile": 0.60,
+  "hv_30": 0.22,
+  "expected_move_pct": 0.042,
+  "max_pain": "415.0",
+  "pcr_volume": 0.52,
+  "pcr_oi": 0.48,
+  "next_event": {
+    "id": "...", "kind": "earnings",
+    "scheduled_at": "2026-06-03T20:30:00Z",
+    "ticker": "MSFT", "notes": null
+  },
+  "data_freshness": {
+    "chain_age_seconds": 3600,
+    "iv_age_seconds": 86400,
+    "hv_age_seconds": 86400,
+    "any_stale": false,
+    "stale_tags": []
+  }
+}
+```
+
+### 15.1 Spot derivation (V1)
+
+`option_chain_snapshots` has no per-snapshot `spot` column (§6 schema). V1 derives spot from the chain itself: the strike with the highest combined open interest at the nearest expiry. High-OI strikes cluster near ATM in practice, so this is a reasonable proxy. The same heuristic lives in `inputs_hydration_service` so both endpoints derive identical spot from the same DB state (replay determinism — see §16).
+
+M2+ refinement: store spot explicitly when uploading the chain, or read from a separate `market_snapshots` table.
+
+### 15.2 422 cases (§22.10)
+
+| Trigger | Status | Body |
+|---|---|---|
+| No `option_chain_snapshots` rows for ticker | 422 | `"chain_not_yet_ingested: …"` |
+| `iv_history` has < 30 rows for ticker | 422 | `"insufficient_iv_history: …"` |
+
+Both 422 paths are the natural "user hasn't uploaded the prerequisite CSVs yet" signal. Clients prompt the user to upload via `/data/{chain, iv}/import-csv`.
+
+### 15.3 §22.10 staleness thresholds
+
+The `data_freshness` field reports how old the underlying data is, with named stale-tags applied above hard thresholds:
+
+| Field | Threshold | Stale tag |
+|---|---|---|
+| `chain_age_seconds` | > 7200 (2h) | `"stale_chain"` |
+| `iv_age_seconds` | > 90000 (~25h) | `"stale_iv"` |
+| `hv_age_seconds` | > 90000 (~25h) | `"stale_hv"` |
+
+`any_stale: true` when any field exceeds its threshold. The Today screen renders an amber badge when this fires.
+
+---
+
+## 16. The M1.17.5 hydration path — how `inputs` becomes optional
+
+Before M1.17.5, every `/engine/daily-plan` call required the caller to supply a fully hydrated `EngineInputs` bundle. That worked for testing but didn't match the master plan's §7 `DailyPlanRequest = {ticker, as_of, use_cache}` shape. M1.17.5 closes the gap: when `inputs` is omitted, the API service hydrates from DB.
+
+### 16.1 The hydration chain
+
+```
+POST /engine/daily-plan { ticker, as_of }      ← no inputs!
+       │
+       ▼
+produce_and_persist(inputs=None) [decision_service.py]
+       │
+       ▼
+hydrate_engine_inputs(session, user_id, ticker, as_of)  [inputs_hydration_service.py]
+       │
+       ├── _hydrate_chain_snapshot   ← all rows at latest fetched_at
+       │                              from option_chain_snapshots
+       │
+       ├── _hydrate_profile          ← users.strategy_profile (or defaults)
+       │
+       ├── _hydrate_positions        ← positions + option_positions
+       │                              aggregated into PositionState
+       │                              (underlying_shares, has_short_call,
+       │                              has_long_put, nearest dte/strike, …)
+       │
+       ├── _hydrate_market_state     ← engine.market_state.classify(…)
+       │                              with iv_history (latest 2 rows for
+       │                              iv_rank_change_1d) + hv_history +
+       │                              events + chain-derived primitives
+       │
+       └── _hydrate_flow_score       ← engine.flow_score.compute(…)
+                                      against the chain
+       │
+       ▼
+EngineInputs → produce_daily_decision() → DailyDecision → persist
+```
+
+The hydration is byte-equivalent to what a caller would supply by hand from the same DB state. **`inputs_hash` is therefore deterministic** — same DB + same `as_of` → same hash → ON CONFLICT idempotency works as in the M1.14 path.
+
+### 16.2 422 cases — missing prerequisites
+
+The hydration raises `ValueError` for three prerequisite-missing cases that the router maps to HTTP 422:
+
+| Error tag | Trigger | Client guidance |
+|---|---|---|
+| `missing_chain` | `option_chain_snapshots` empty for ticker | Upload chain.csv via `POST /api/v1/data/chain/import-csv` |
+| `insufficient_iv_history` | `iv_history` < 30 rows for ticker (§22.12) | Upload more iv_history.csv |
+| `missing_positions` | No positions AND no open `option_positions` for `(user_id, ticker)` | Upload positions.csv |
+
+Recommended client flow: catch 422 with one of these tags, render a CTA to the upload page for the missing CSV.
+
+### 16.3 V1 simplifying assumptions
+
+A handful of `classify()` inputs require historical context that M1.17's CSV import doesn't yet populate. The V1 hydration punts on those with safe defaults:
+
+| Field | V1 default | Reason |
+|---|---|---|
+| `breakout_signal` | `0.0` | Needs 5-day price + IV history + OI shift; M2+ refines |
+| `oi_concentration_at_max_pain` | `0.0` | Needs OI distribution roll-up; engine accepts 0 safely |
+| `gap_pct` | `null` | No daily-close tracking yet |
+| `trend_strength` | `0.5` | Engine's own fallback for insufficient ADX history (§22.5) |
+| `iv_rank_change_1d` | 2-row diff if available, else `0.0` | OK for V1 |
+| `days_to_nearest_opex` | 3rd-Friday date arithmetic | Pure calendar math |
+
+The contract is preserved: the engine still produces a coherent `DailyDecision`; the deterministic-replay guarantee holds (same DB state → same hash). All shortcuts are documented inline in `inputs_hydration_service.py`.
+
+### 16.4 Choosing between the two shapes
+
+| Use case | Recommended shape |
+|---|---|
+| Production Today screen | DB-hydrated (M1.17.5) — let the API do the work |
+| Backtest harness | Hydrated body (M1.14) — supply scripted inputs |
+| Calibration test fixtures | Hydrated body — exact replayability |
+| What-if drilling with overrides | `/engine/what-if` with `overrides` (§7) |
+| Demo / playground | DB-hydrated — fewer moving parts |
+
+---
+
+## 17. Plan deviations
 
 Two of the seven endpoints' request shapes diverge from the master plan §7 reference. Both deviations are deliberate: the engine implementations went a different way during M1.7–M1.13, and the API layer prefers to match the engine over rewriting the engine to match a stale plan signature.
 
@@ -886,7 +1316,7 @@ Both deviations are logged inline in `apps/api/app/schemas/decision.py` (the `Fl
 
 ---
 
-## 13. Hands-on exercises
+## 18. Hands-on exercises
 
 ### Exercise 1 — Replay verification
 
@@ -920,7 +1350,7 @@ POST `/engine/strike-candidates` with `action.emit = "NO_OP"`. Verify the respon
 
 ---
 
-## 14. Further reading
+## 19. Further reading
 
 - **Master plan §7** — canonical endpoint table + request/response Pydantic schemas (the source of truth for request/response shapes).
 - **Master plan §22.14** — what-if non-persistence contract.
@@ -934,11 +1364,18 @@ POST `/engine/strike-candidates` with `action.emit = "NO_OP"`. Verify the respon
 - **M1.14 PR** ([#45](https://github.com/csupenn/option-mgmt-2026/pull/45)) — daily-plan + recommend.
 - **M1.15 PR** ([#47](https://github.com/csupenn/option-mgmt-2026/pull/47)) — what-if + market-state + flow-score.
 - **M1.16 PR** ([#48](https://github.com/csupenn/option-mgmt-2026/pull/48)) — strike-candidates + execution-check.
+- **M1.17 PR** ([#50](https://github.com/csupenn/option-mgmt-2026/pull/50)) — profile + outcomes + CSV imports + market/latest.
+- **M1.17.5 PR** ([#51](https://github.com/csupenn/option-mgmt-2026/pull/51)) — `DailyPlanRequest.inputs` optional + DB hydration.
+- **Master plan §9.9** — `UserStrategyProfile` validation rules.
+- **Master plan §9.10** — Outcome Tracker / learning loop.
+- **Master plan §10** — Canonical CSV formats.
+- **Master plan §22.10** — `MarketLatestSnapshot` data source + staleness thresholds.
+- **Master plan §22.12** — IV history validation policy.
 - **Tutorials:** [Master Decision Engine](./master-decision-engine.md) covers everything happening inside `/engine/daily-plan`; the four upstream tutorials cover the modules wrapped by the sub-step endpoints.
 
 ---
 
-## 15. Glossary
+## 20. Glossary
 
 - **Action** — One emit code + parameters dict (`target_delta`, `target_dte`, `size_pct`, `urgency_days`) produced by the M1.9 rule pipeline. The unit the Strike Selector consumes.
 - **ChainSnapshot** — Frozen point-in-time option chain projection: ticker + spot + as_of + tuple of `OptionContract`s. Carries everything the engine reads from the chain.
@@ -956,5 +1393,21 @@ POST `/engine/strike-candidates` with `action.emit = "NO_OP"`. Verify the respon
 - **StrikeLeg** — Concrete option leg picked by the strike selector: `OptionContract` + `LegSide` (`LONG` / `SHORT`) + match diagnostics (`delta_target`, `delta_actual`, `delta_distance`, `dte_actual`, `mid_price`).
 - **StrikeSelection** — Output of `engine.strike_selector.select_strikes()`: echoed emit + 0..N `StrikeLeg`s + optional `skipped_reason`.
 - **three-pin lock** — `(engine_version, weights_version, inputs_hash)`. Persisted on every `DailyDecision`. The combination guarantees byte-exact replay.
-- **V1 hydration** — Current convention: every engine endpoint accepts the full input bundle in the request body. M1.17+ optionally hydrates from Postgres when fields are omitted.
+- **V1 hydration** — As of M1.17.5, `DailyPlanRequest.inputs` is optional; when omitted, the API service hydrates from DB via `inputs_hydration_service.hydrate_engine_inputs()`. See §16.
 - **weights_version** — Version string of the active `weights.yaml` (currently `"v2.0"`). Bumped when the M1.10 multiplicative composer's weights change.
+
+### Added in M1.17 + M1.17.5
+
+- **CsvImportResponse** — Uniform shape across all 5 CSV upload endpoints: `{inserted, updated, skipped, errors, validation_warnings}`. Per-row failures are reported in `errors[]` with 1-indexed line numbers.
+- **cursor (outcomes)** — Opaque base64-encoded `{evaluated_at, id}` tuple of the last row in the previous outcomes page. Server-side encoding can change without notice; clients pass it back verbatim.
+- **data_freshness** — Per-input age stamps + staleness tags on `/market/{ticker}/latest` (and on `DailyDecision.data_freshness`). `any_stale: true` fires when any field exceeds its §22.10 threshold.
+- **hydrate_engine_inputs** — M1.17.5 service function that builds an `EngineInputs` bundle from the latest DB rows and reproduces `market_state.classify` + `flow_score.compute` server-side. Same DB state → same hydrated bundle → same `inputs_hash` → ON CONFLICT idempotency holds.
+- **insufficient_iv_history** — 422 error tag fired when `iv_history` has < 30 rows for the ticker (§22.12). Triggered by `/data/iv/import-csv` (post-insert validation, rolled back) and by `/engine/daily-plan` without `inputs` + by `/market/{ticker}/latest`.
+- **missing_chain** — 422 error tag fired during hydration when `option_chain_snapshots` is empty for the ticker.
+- **missing_positions** — 422 error tag fired during hydration when the user has no positions and no open option_positions for the ticker.
+- **Outcome** — Manual entry tied 1:1 to a `daily_decisions` row via FK + UNIQUE. Records realized PnL, decision quality, error category, and the regime that actually materialized. Powers the §9.10 learning loop.
+- **OutcomeSource** — `"manual"` (user entry) or `"auto"` (reserved for M3.5 auto-fill). Server-set on POST; immutable after insert.
+- **ProfileUpdateRequest** — API-layer strict wrapper around `engine.profiles.UserStrategyProfile` with `extra="forbid"`. Surfaces typos like `max_postion_pct` as 422 rather than silently dropping them.
+- **spot heuristic (V1)** — Both `/market/{ticker}/latest` and the hydration service derive spot as the strike with the highest combined OI at the nearest expiry (when no explicit spot column exists). High-OI strikes cluster near ATM. M2+ can refine by storing spot explicitly or reading from a dedicated market-data table.
+- **stale_chain / stale_iv / stale_hv** — Staleness tags applied when the matching `*_age_seconds` exceeds the §22.10 thresholds (7200s for chain; 90000s for iv + hv).
+- **UserStrategyProfile** — Frozen Pydantic model in `engine.profiles` describing the user's risk/income preferences + delta/DTE bands + drawdown tolerance + style. Persisted to `users.strategy_profile` JSONB. Hydrated into every `/engine/daily-plan` call.
