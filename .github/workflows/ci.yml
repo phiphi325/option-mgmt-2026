@@ -262,6 +262,13 @@ jobs:
         working-directory: apps/api
         env:
           SMOKE_API_URL: http://127.0.0.1:8000/api/v1
+          # The smoke pytest process opens its own psycopg connection to
+          # verify persisted rows and seed the test user — must point to
+          # the SAME DB the uvicorn process writes to. Otherwise the
+          # apps/api/tests/conftest.py default kicks in and routes to
+          # msft_engine_test (which doesn't exist on this Postgres service).
+          JWT_SECRET: ci-jwt-secret-not-for-production
+          DATABASE_URL: postgresql+psycopg://postgres:dev@localhost:5432/msft_engine
         run: uv run pytest -m smoke
 
       - name: Stop uvicorn
