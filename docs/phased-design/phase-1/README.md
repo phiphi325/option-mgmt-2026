@@ -20,8 +20,8 @@ Phase 1 ships the engine-first MVP per master plan §17. Aggregate size: ~5 week
 | M1.9 | Recommendation Engine: 8 YAML rules + tests | M | shipped | — |
 | M1.10 | Confidence Composer + weights.yaml | M | shipped | — |
 | M1.11 | Execution Feasibility Module | M | shipped | — |
-| M1.11a | Collar Builder engine (v1.1 patch) | L | **NOT YET SHIPPED** | engine module `packages/engine/engine/collar_builder/` does not exist; blocks M1.16a |
-| M1.11b | Collar Builder integration into Master Decision (v1.1) | M | **NOT YET SHIPPED** | depends on M1.11a |
+| M1.11a | Collar Builder engine (v1.1 patch) | L | **planned** | [`m1.11a-collar-builder-engine.md`](./m1.11a-collar-builder-engine.md) — engine module `packages/engine/engine/collar_builder/` to be added; blocks M1.11b + M1.16a. Engine version bump `1.4.0` → `1.5.0`. |
+| M1.11b | Collar Builder integration into Master Decision (v1.1) | M | **planned** | [`m1.11b-collar-builder-integration.md`](./m1.11b-collar-builder-integration.md) — wires `collar_builder.build()` into `decision.produce()` for `OPEN_COLLAR` emits; depends on M1.11a. Engine version bump `1.5.0` → `1.6.0`. |
 | M1.12 | Execution downgrade callback | S | shipped | — |
 | M1.13 | Master Decision Engine orchestration | M | shipped | — |
 | M1.14 | `/engine/daily-plan` + `/engine/recommend` endpoints | S | shipped | [PR #45](https://github.com/csupenn/option-mgmt-2026/pull/45) → `c0583ed` |
