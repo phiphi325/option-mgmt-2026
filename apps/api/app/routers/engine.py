@@ -1,21 +1,23 @@
 """Engine endpoints — read/write surface on the M1.13 pipeline.
 
-Per plan v1.2 §7 + §22.14 + §17 M1.14 + M1.15.
+Per plan v1.2 §7 + §22.14 + §17 M1.14 + M1.15 + M1.16.
 
 All endpoints require authentication (JWT-decoded user_id). The
 business logic lives in `app.services.decision_service`; this module
 is a thin HTTP-shape layer.
 
-  POST /engine/daily-plan    → DailyDecisionResponse  (200 + persisted row)
-  POST /engine/recommend     → RecommendResponse      (200; no persistence)
-  POST /engine/what-if       → WhatIfResponse         (200; NEVER persists)
-  POST /engine/market-state  → MarketStateResponse    (200; classify() only)
-  POST /engine/flow-score    → FlowScoreResponse      (200; compute() only)
+  POST /engine/daily-plan        → DailyDecisionResponse       (200 + persisted row)
+  POST /engine/recommend         → RecommendResponse           (200; no persistence)
+  POST /engine/what-if           → WhatIfResponse               (200; NEVER persists)
+  POST /engine/market-state      → MarketStateResponse          (200; classify() only)
+  POST /engine/flow-score        → FlowScoreResponse            (200; compute() only)
+  POST /engine/strike-candidates → StrikeCandidatesResponse     (200; select_strikes() only)
+  POST /engine/execution-check   → ExecutionCheckResponse       (200; assess() only)
 
-Future endpoints in the same router (M1.16+):
-  POST /engine/strike-candidates (M1.16; standalone select_strikes())
-  POST /engine/execution-check   (M1.16; standalone assess())
-  POST /engine/collar-builder    (M1.16a; standalone build())
+Future endpoints in the same router:
+  POST /engine/collar-builder    (M1.16a; deferred — requires M1.11a engine module
+                                  `packages/engine/engine/collar_builder/` which
+                                  is not yet shipped.)
 """
 
 from __future__ import annotations
@@ -29,21 +31,27 @@ from app.deps import get_authenticated_user_id, get_session
 from app.schemas.decision import (
     DailyDecisionResponse,
     DailyPlanRequest,
+    ExecutionCheckRequest,
+    ExecutionCheckResponse,
     FlowScoreRequest,
     FlowScoreResponse,
     MarketStateRequest,
     MarketStateResponse,
     RecommendRequest,
     RecommendResponse,
+    StrikeCandidatesRequest,
+    StrikeCandidatesResponse,
     WhatIfRequest,
     WhatIfResponse,
 )
 from app.schemas.engine import decision_to_jsonable_dict
 from app.services.decision_service import (
     produce_and_persist,
+    run_execution_check,
     run_flow_score,
     run_market_state,
     run_recommend,
+    run_strike_candidates,
     run_what_if,
 )
 
@@ -235,3 +243,78 @@ async def flow_score(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return FlowScoreResponse(flow_score=decision_to_jsonable_dict(score))
+
+
+# ----------------------------------------------------------------------
+# M1.16 — strike + execution standalone endpoints
+# ----------------------------------------------------------------------
+
+
+@router.post(
+    "/strike-candidates",
+    response_model=StrikeCandidatesResponse,
+    summary="Run the Strike Selector for one Action (no persistence)",
+)
+async def strike_candidates(
+    request: StrikeCandidatesRequest,
+    user_id: AuthedUserDep,
+) -> StrikeCandidatesResponse:
+    """V1 strike-candidates endpoint per plan §17 M1.16 + §9.4.
+
+    Runs ONLY `engine.strike_selector.select_strikes()`. No DB, no
+    persistence. Returns the `StrikeSelection` JSON projection (emit
+    echo + 0..N legs + optional `skipped_reason`).
+    """
+    _ = user_id  # auth required; rate-limit hook reserved.
+
+    try:
+        selection = run_strike_candidates(
+            action=request.action.to_engine(),
+            chain_snapshot=request.chain_snapshot,
+            risk_free_rate=request.risk_free_rate,
+            dividend_yield=request.dividend_yield,
+        )
+    except ValueError as exc:
+        # Engine raises ValueError on `chain_snapshot.spot <= 0` (defensive).
+        # Other invalid inputs (empty chain, no eligible contracts) flow
+        # through as `legs=()` + `skipped_reason` and produce 200.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return StrikeCandidatesResponse(
+        strike_selection=decision_to_jsonable_dict(selection)
+    )
+
+
+@router.post(
+    "/execution-check",
+    response_model=ExecutionCheckResponse,
+    summary="Run the Execution Feasibility Module for caller-supplied legs (no persistence)",
+)
+async def execution_check(
+    request: ExecutionCheckRequest,
+    user_id: AuthedUserDep,
+) -> ExecutionCheckResponse:
+    """V1 execution-check endpoint per plan §17 M1.16 + §9.8.
+
+    Runs ONLY `engine.execution.assess()`. No DB, no persistence.
+    Returns the `Execution` JSON projection (per-leg + aggregate
+    feasibility scoring).
+
+    Empty `legs` list is valid — the engine returns an aggregate-only
+    `Execution` for REDUCE_COVERAGE / MONETIZE_PUT / NO_OP shapes.
+
+    Length-mismatched `quantities` (when provided) surface as 422
+    via the engine's `assess()` defensive check.
+    """
+    _ = user_id
+
+    engine_legs = [leg.to_engine() for leg in request.legs]
+    try:
+        result = run_execution_check(
+            legs=engine_legs,
+            quantities=request.quantities,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return ExecutionCheckResponse(execution=decision_to_jsonable_dict(result))

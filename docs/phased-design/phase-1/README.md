@@ -20,13 +20,13 @@ Phase 1 ships the engine-first MVP per master plan §17. Aggregate size: ~5 week
 | M1.9 | Recommendation Engine: 8 YAML rules + tests | M | shipped | — |
 | M1.10 | Confidence Composer + weights.yaml | M | shipped | — |
 | M1.11 | Execution Feasibility Module | M | shipped | — |
-| M1.11a | Collar Builder engine (v1.1 patch) | L | shipped | — |
-| M1.11b | Collar Builder integration into Master Decision (v1.1) | M | shipped | — |
+| M1.11a | Collar Builder engine (v1.1 patch) | L | **NOT YET SHIPPED** | engine module `packages/engine/engine/collar_builder/` does not exist; blocks M1.16a |
+| M1.11b | Collar Builder integration into Master Decision (v1.1) | M | **NOT YET SHIPPED** | depends on M1.11a |
 | M1.12 | Execution downgrade callback | S | shipped | — |
 | M1.13 | Master Decision Engine orchestration | M | shipped | — |
-| M1.14 | `/engine/daily-plan` + `/engine/recommend` endpoints | S | shipped | — (PR #45) |
-| M1.15 | `/engine/what-if` + `/engine/market-state` + `/engine/flow-score` | S | **planned** | [`m1.15-engine-readonly-endpoints.md`](./m1.15-engine-readonly-endpoints.md) |
-| M1.16 | `/engine/strike-candidates` + `/engine/execution-check` (+ v1.1: M1.16a `/engine/collar-builder`, M1.16b `/health`/`/version`/`/market/msft/latest`) | S | **planned** | [`m1.16-strike-execution-endpoints.md`](./m1.16-strike-execution-endpoints.md) |
+| M1.14 | `/engine/daily-plan` + `/engine/recommend` endpoints | S | shipped | [PR #45](https://github.com/csupenn/option-mgmt-2026/pull/45) → `c0583ed` |
+| M1.15 | `/engine/what-if` + `/engine/market-state` + `/engine/flow-score` | S | shipped | [PR #47](https://github.com/csupenn/option-mgmt-2026/pull/47) → `22b0033` |
+| M1.16 | `/engine/strike-candidates` + `/engine/execution-check` (reduced scope — see dev spec) | S | **in-progress** | [`m1.16-strike-execution-endpoints.md`](./m1.16-strike-execution-endpoints.md) — Patch v1.1 companions deferred: M1.16a awaits M1.11a; M1.16b `/market/msft/latest` bundles with M1.17 CSV import; M1.16b `/health` + `/healthz` + `/version` already shipped (M0.3-era). |
 | M1.17 | `/profile` + `/outcomes` + CSV upload endpoints | M | **planned** | [`m1.17-profile-outcomes-csv-import.md`](./m1.17-profile-outcomes-csv-import.md) |
 | M1.18 | Today screen scaffolding + DecisionCard + StrategyTitle | M | **planned** | [`m1.18-today-screen-scaffolding.md`](./m1.18-today-screen-scaffolding.md) |
 | M1.19 | ActionList + ActionRow + ExecutionBadge | S | planned (Phase 1 cont.) | TBD |

@@ -302,7 +302,7 @@ async def test_recommend_endpoint_returns_200_in_smoke(
 
 
 async def test_engine_routes_in_smoke_openapi(http: httpx.AsyncClient) -> None:
-    """The smoke API's OpenAPI schema includes the M1.14 + M1.15 routes."""
+    """The smoke API's OpenAPI schema includes the M1.14 + M1.15 + M1.16 routes."""
     r = await http.get("/openapi.json")
     assert r.status_code == 200
     paths = r.json()["paths"]
@@ -313,6 +313,9 @@ async def test_engine_routes_in_smoke_openapi(http: httpx.AsyncClient) -> None:
     assert "/api/v1/engine/what-if" in paths
     assert "/api/v1/engine/market-state" in paths
     assert "/api/v1/engine/flow-score" in paths
+    # M1.16
+    assert "/api/v1/engine/strike-candidates" in paths
+    assert "/api/v1/engine/execution-check" in paths
 
 
 # ----------------------------------------------------------------------
@@ -414,3 +417,79 @@ async def test_flow_score_smoke(
         "gamma_sign", "confidence", "explanation", "breakdown",
     ):
         assert field in fs, f"V1 contract field missing: {field}"
+
+
+# ----------------------------------------------------------------------
+# M1.16 smoke tests
+# ----------------------------------------------------------------------
+
+
+async def test_strike_candidates_smoke(
+    http: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """POST /engine/strike-candidates against live API + the M1.14 chain fixture."""
+    chain = _inputs_payload()["chain_snapshot"]
+    body = {
+        "ticker": "MSFT",
+        "action": {
+            "emit": "SELL_COVERED_CALL_PARTIAL",
+            "parameters": {
+                "target_delta": 0.25,
+                "target_dte": 30.0,
+                "size_pct": 0.5,
+            },
+        },
+        "chain_snapshot": chain,
+    }
+    r = await http.post(
+        "/engine/strike-candidates", json=body, headers=auth_headers
+    )
+    assert r.status_code == 200, r.text
+    sel = r.json()["strike_selection"]
+    assert sel["emit"] == "SELL_COVERED_CALL_PARTIAL"
+    # Live chain may or may not yield legs depending on its OI/spread
+    # thresholds against engine defaults; both paths are valid for V1
+    # smoke. The contract is: emit echoed, legs is a list, skipped_reason
+    # is present (None or string).
+    assert isinstance(sel["legs"], list)
+    assert "skipped_reason" in sel
+
+
+async def test_execution_check_smoke(
+    http: httpx.AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """POST /engine/execution-check against live API with one SHORT call leg."""
+    body = {
+        "legs": [
+            {
+                "contract": {
+                    "underlying": "MSFT",
+                    "expiry": date(2026, 6, 19).isoformat(),
+                    "strike": 420.0,
+                    "option_type": "CALL",
+                    "bid": 2.40,
+                    "ask": 2.50,
+                    "mid": 2.45,
+                    "iv": 0.27,
+                    "open_interest": 2500,
+                    "volume": 180,
+                },
+                "side": "SHORT",
+                "delta_target": 0.25,
+                "delta_actual": 0.27,
+                "delta_distance": 0.02,
+                "dte_actual": 30,
+                "mid_price": 2.45,
+            }
+        ],
+    }
+    r = await http.post(
+        "/engine/execution-check", json=body, headers=auth_headers
+    )
+    assert r.status_code == 200, r.text
+    execution = r.json()["execution"]
+    assert "aggregate_liquidity_score" in execution
+    assert "aggregate_fill_confidence" in execution
+    assert len(execution["legs"]) == 1

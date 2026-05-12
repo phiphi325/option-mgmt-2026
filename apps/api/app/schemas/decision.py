@@ -28,7 +28,9 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from engine.profiles import UserStrategyProfile
-from engine.types import ChainSnapshot
+from engine.recommendation import Action, EmittedAction
+from engine.strike_selector import LegSide, StrikeLeg
+from engine.types import ChainSnapshot, OptionContract
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.engine import FlowScoreModel, MarketStateResultModel, PositionStateModel
@@ -302,3 +304,121 @@ class FlowScoreResponse(BaseModel):
     """
 
     flow_score: dict[str, Any]
+
+
+# ----------------------------------------------------------------------
+# /engine/strike-candidates (M1.16)
+# ----------------------------------------------------------------------
+
+
+class ActionPayload(BaseModel):
+    """Pydantic projection of `engine.recommendation.Action`.
+
+    The M1.16 dev spec originally specified an `intent` enum (per plan §9.4
+    `select(intent, ...)`). The actual engine implementation (M1.7) ships
+    `select_strikes(action, chain_snapshot, ...)` — takes an `Action`
+    from the M1.9 recommendation pipeline, not a high-level intent. The
+    API layer accepts whatever the engine actually consumes (Action), per
+    the same convention used for M1.15's flow_score deviation.
+
+    `parameters` keys (stable per recommendation.types.Action docstring):
+      target_dte:    target days to expiry for the new option leg
+      target_delta:  target absolute delta of the new option leg
+      size_pct:      fraction of position to act on
+      urgency_days:  rough days-to-act window
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    emit: EmittedAction
+    parameters: dict[str, float] = Field(default_factory=dict)
+
+    def to_engine(self) -> Action:
+        return Action(emit=self.emit, parameters=dict(self.parameters))
+
+
+class StrikeCandidatesRequest(BaseModel):
+    """Request body for `POST /engine/strike-candidates`.
+
+    Per plan §9.4 + §17 M1.16. Runs `engine.strike_selector.select_strikes()`
+    against a caller-supplied `Action` + `ChainSnapshot`. Pure read-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str = Field(default="MSFT", min_length=1, max_length=10)
+    action: ActionPayload
+    chain_snapshot: ChainSnapshot
+    risk_free_rate: float = Field(default=0.05, ge=0.0, le=1.0)
+    dividend_yield: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class StrikeCandidatesResponse(BaseModel):
+    """Response envelope for `POST /engine/strike-candidates`.
+
+    `strike_selection` carries the `StrikeSelection` JSON projection:
+    emit (echoed), legs (zero or more StrikeLeg), skipped_reason.
+    """
+
+    strike_selection: dict[str, Any]
+
+
+# ----------------------------------------------------------------------
+# /engine/execution-check (M1.16)
+# ----------------------------------------------------------------------
+
+
+class StrikeLegPayload(BaseModel):
+    """Pydantic projection of `engine.strike_selector.StrikeLeg`.
+
+    Used in `ExecutionCheckRequest.legs`. Mirrors the engine dataclass
+    field-for-field. The contained `OptionContract` is already a
+    Pydantic BaseModel (engine.types.OptionContract), reused directly.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract: OptionContract
+    side: LegSide
+    delta_target: float
+    delta_actual: float
+    delta_distance: float = Field(ge=0.0)
+    dte_actual: int = Field(ge=0)
+    mid_price: float | None = Field(default=None, ge=0.0)
+
+    def to_engine(self) -> StrikeLeg:
+        return StrikeLeg(
+            contract=self.contract,
+            side=self.side,
+            delta_target=self.delta_target,
+            delta_actual=self.delta_actual,
+            delta_distance=self.delta_distance,
+            dte_actual=self.dte_actual,
+            mid_price=self.mid_price,
+        )
+
+
+class ExecutionCheckRequest(BaseModel):
+    """Request body for `POST /engine/execution-check`.
+
+    Per plan §9.8 + §17 M1.16. Runs `engine.execution.assess()` against
+    a caller-supplied list of `StrikeLeg`s + optional per-leg `quantities`
+    (defaults to 1 contract per leg). Pure read-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    legs: list[StrikeLegPayload]
+    quantities: list[int] | None = Field(default=None)
+
+
+class ExecutionCheckResponse(BaseModel):
+    """Response envelope for `POST /engine/execution-check`.
+
+    `execution` carries the `Execution` JSON projection: per-leg
+    `ExecutionLeg`s (liquidity_score, spread_bps, fill_confidence,
+    expected_slippage, suggested_order_type, limit_price_band,
+    size_warnings) + aggregate scoring.
+    """
+
+    execution: dict[str, Any]

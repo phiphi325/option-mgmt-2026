@@ -42,10 +42,13 @@ from engine import (
     produce_daily_decision,
     recommend,
 )
+from engine.execution import Execution, assess
 from engine.flow_score import compute as flow_score_compute
 from engine.flow_score.types import FlowScore
 from engine.market_state.classify import MarketStateResult, classify
+from engine.recommendation import Action
 from engine.recommendation.yaml_loader import load_default_rules
+from engine.strike_selector import StrikeLeg, StrikeSelection, select_strikes
 from engine.types import ChainSnapshot
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -388,3 +391,49 @@ def run_flow_score(
         risk_free_rate=risk_free_rate,
         dividend_yield=dividend_yield,
     )
+
+
+# ----------------------------------------------------------------------
+# M1.16 — strike + execution standalone wrappers
+# ----------------------------------------------------------------------
+
+
+def run_strike_candidates(
+    *,
+    action: Action,
+    chain_snapshot: ChainSnapshot,
+    risk_free_rate: float = 0.05,
+    dividend_yield: float = 0.0,
+) -> StrikeSelection:
+    """Run `engine.strike_selector.select_strikes()` per plan §9.4.
+
+    Pure wrapper — no DB, no persistence. The engine delta-matches
+    contracts against `action.parameters.target_delta`, DTE-matches
+    against `target_dte`, and returns zero or more `StrikeLeg`s
+    wrapped in a `StrikeSelection`.
+
+    Dev-spec deviation noted in `docs/phased-design/phase-1/
+    m1.16-strike-execution-endpoints.md`: the spec adapted to the
+    engine's real `Action`-driven contract rather than plan §9.4's
+    `intent`-driven idea (same pattern as M1.15's flow_score).
+    """
+    return select_strikes(
+        action=action,
+        chain_snapshot=chain_snapshot,
+        risk_free_rate=risk_free_rate,
+        dividend_yield=dividend_yield,
+    )
+
+
+def run_execution_check(
+    *,
+    legs: Sequence[StrikeLeg],
+    quantities: Sequence[int] | None = None,
+) -> Execution:
+    """Run `engine.execution.assess()` per plan §9.8.
+
+    Pure wrapper — no DB, no persistence. Empty `legs` tuple is valid
+    (REDUCE_COVERAGE / MONETIZE_PUT / NO_OP shapes); the engine returns
+    an aggregate-only `Execution` in that case.
+    """
+    return assess(legs=legs, quantities=quantities)
