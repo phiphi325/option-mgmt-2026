@@ -6,7 +6,7 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 
 ## Status
 
-**Phase 1 — Engine MVP. In progress.** Engine `1.4.0`, **367** tests on `main`. The decision pipeline is feature-complete end-to-end through M1.13 — `produce_daily_decision()` wires every upstream engine into a single replayable `DailyDecision`. Next up: the FastAPI endpoint layer (M1.14+).
+**Phase 1 — Engine MVP. In progress.** Engine `1.5.0`, ~830 tests on `main`. The decision pipeline is feature-complete end-to-end through M1.13, the **public API surface is shipped** (M1.14–M1.17.5: 17 endpoints), the **Today screen scaffolding is live** (M1.18), and the **Collar Builder engine** is now in place (M1.11a). Next up: M1.11b (wire Collar Builder into `produce_daily_decision()`) before the next frontend milestone (M1.19 ActionList).
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-transitions/`](./docs/thread-transitions/) for thread-by-thread handoff records.
 
@@ -44,13 +44,17 @@ See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-tr
 | ✅ | M1.11 — Execution Feasibility Module (`assess()`; per-leg liquidity / spread / slippage / fill; `liquidity_penalty()` bridge to composer) | [#41](https://github.com/csupenn/option-mgmt-2026/pull/41) | `1.2.0` |
 | ✅ | M1.12 — Execution downgrade callback (`downgrade_if_needed()` + 2-rung liquidity ladder; pre-filters chain when any leg fill < 0.50) | [#42](https://github.com/csupenn/option-mgmt-2026/pull/42) | `1.3.0` |
 | ✅ | M1.13 — Master Decision Engine (`produce_daily_decision()` + `DailyDecision` + `compute_inputs_hash()`; three-pin replay lock) | [#43](https://github.com/csupenn/option-mgmt-2026/pull/43) | `1.4.0` |
-| | M1.14 — `POST /engine/daily-plan` + `POST /engine/recommend` endpoints (wires `produce_daily_decision()` into FastAPI) | — | — |
-| | M1.15 — `/engine/what-if` + `/engine/market-state` + `/engine/flow-score` | — | — |
-| | M1.16 — `/engine/strike-candidates` + `/engine/execution-check` | — | — |
-| | M1.17 — `/profile` + `/outcomes` + CSV upload endpoints | — | — |
-| | M1.18–M1.25 — Today screen, Collar Builder, Outcome Tracker | — | — |
+| ✅ | M1.14 — `POST /engine/daily-plan` + `POST /engine/recommend` (wires `produce_daily_decision()` into FastAPI) | [#45](https://github.com/csupenn/option-mgmt-2026/pull/45) | — |
+| ✅ | M1.15 — `/engine/what-if` + `/engine/market-state` + `/engine/flow-score` (read-only sub-step endpoints) | [#47](https://github.com/csupenn/option-mgmt-2026/pull/47) | — |
+| ✅ | M1.16 — `/engine/strike-candidates` + `/engine/execution-check` (reduced scope; collar-builder endpoint deferred to M1.16a) | [#48](https://github.com/csupenn/option-mgmt-2026/pull/48) | — |
+| ✅ | M1.17 — `/profile` + `/outcomes` + 5 CSV import endpoints + `/market/{ticker}/latest` (M1.16b pickup) | [#50](https://github.com/csupenn/option-mgmt-2026/pull/50) | — |
+| ✅ | M1.17.5 — `DailyPlanRequest.inputs` optional + DB hydration (`inputs_hydration_service.py`); 422 on `missing_chain` / `missing_positions` / `insufficient_iv_history` | [#51](https://github.com/csupenn/option-mgmt-2026/pull/51) | — |
+| ✅ | M1.18 — Today screen scaffolding (`DailyDecisionCard` + `MarketStateBadge` + `StrategyTitle` + 6 regime colors; first Next.js milestone since M0.4) | [#53](https://github.com/csupenn/option-mgmt-2026/pull/53) | — |
+| ✅ | M1.11a — Collar Builder engine module (`engine.collar_builder.build()`; 3 intents: `zero_cost`/`income`/`defensive`; grid-search solver per §9.10) | [#56](https://github.com/csupenn/option-mgmt-2026/pull/56) | `1.5.0` |
+| | M1.11b — Collar Builder integration into Master Decision (dispatcher on `OPEN_COLLAR` emits → calls `collar_builder.build(intents=[ZERO_COST])`) | — | `1.6.0` (planned) |
+| | M1.19–M1.25 — ActionList, ConfidenceBreakdownChart, WatchLevels, Profile UI, Outcome Tracker, Golden tests, Calibration + Playwright | — | — |
 
-**Decision pipeline status (post-M1.13).** Engine `1.4.0` ships every node of the §9.6 pipeline as a pure, deterministic function. A single `produce_daily_decision(...)` call now wires Market State → Flow Score → Recommendation (rule pipeline) → Strike Selector → Execution Feasibility + Downgrade → Confidence Composer into one `DailyDecision` with `engine_version` + `weights_version` + `inputs_hash` for exact replay. The API surface (M1.14+) is the next major milestone block.
+**Where we are.** The decision pipeline is end-to-end live in production. `produce_daily_decision()` (M1.13) wires Market State → Flow Score → Recommendation → Strike Selector → Execution Feasibility + Downgrade → Confidence Composer into one `DailyDecision` with three-pin replay safety. M1.14–M1.17.5 expose every engine sub-step over HTTP (17 endpoints). M1.18 ships the Today screen scaffolding with `getDailyPlan()` server-rendering the headline card. M1.11a just shipped the Collar Builder engine module as a standalone first-class engine; M1.11b will wire it into `produce_daily_decision()` so `OPEN_COLLAR` emits produce concrete two-leg structures.
 
 **Milestone-numbering correction.** PRs #36 and #37 were originally labeled "M1.7" and "M1.8" respectively; per plan v1.2 §17 the actual milestone numbers are swapped (Strike Selector is M1.7 size L; Recommendation Engine is M1.8 size M). The functional code is correct in both PRs — only the PR titles + branch names mis-labeled the milestone. The table above shows the canonical plan §17 mapping; CHANGELOG `[1.0.0]` documents the correction.
 
@@ -82,7 +86,8 @@ Read [`docs/`](./docs/) before any code change:
 - [`docs/decisions/`](./docs/decisions/) — ADRs (engine-first, regime taxonomy, confidence composer, ...).
 - [`docs/enhancements/`](./docs/enhancements/) — third-party enhancement specs + per-spec assessments. Adoption decisions live in ADRs.
 - [`docs/thread-transitions/`](./docs/thread-transitions/) — per-AI-thread handoff records. One file per thread, capturing what shipped + decisions + handoff brief.
-- [`docs/tutorials/`](./docs/tutorials/) — long-form pedagogical tutorials (Market State, Scoring Primitives, Flow Score, Confidence Composer, **Master Decision Engine**).
+- [`docs/tutorials/`](./docs/tutorials/) — long-form pedagogical tutorials (Market State, Scoring Primitives, Flow Score, Confidence Composer, Master Decision Engine, **Collar Builder**) + the [`engine-api-reference.md`](./docs/tutorials/engine-api-reference.md) covering M1.14–M1.17.5's 17 HTTP endpoints.
+- [`docs/phased-design/phase-1/`](./docs/phased-design/phase-1/) — milestone roster + per-milestone dev specs (M1.15–M1.18, M1.11a, M1.11b). The [`review/`](./docs/phased-design/phase-1/review/) subfolder hosts post-merge code-quality retrospectives.
 - [`CHANGELOG.md`](./CHANGELOG.md) — per-engine-version changelog (Keep a Changelog format).
 
 The full development plan v1.2 lives in the Hyperagent thread `cmokf2twq0gsv06adlij0glqs`.
@@ -95,7 +100,7 @@ apps/
   api/              # FastAPI — engine endpoints                        [shipped M0.3]
   jobs/             # (Phase 2) scheduled ingestion — consolidated into apps/api/app/jobs/ in P1
 packages/
-  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.4.0]
+  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.5.0]
     config/         # YAML configs (filesystem boundary per ADR-0005)
       rules.yaml            # Recommendation Engine V1 rules            [M1.9]
       weights.yaml          # Confidence Composer V1 weights (v2.0)     [M1.10]
@@ -104,7 +109,7 @@ packages/
       regimes.py            # 6 locked regimes + REGIME_SPEC table      [M0.6 / M1.4]
       profiles.py           # UserStrategyProfile + ProfileStyle        [M0.6 / M1.9]
       types.py              # OptionContract + ChainSnapshot            [M0.6]
-      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.4.0]
+      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.5.0]
       greeks.py             # BS delta/gamma/vega/theta/rho             [M1.6]
       market_state/         # M1.1-M1.4 — produces MarketStateResult
         iv.py               # IV rank + IV percentile                   [M1.1]
@@ -156,6 +161,11 @@ packages/
         produce.py          # produce_daily_decision() orchestrator    [M1.13]
         hashing.py          # compute_inputs_hash() (canonical JSON)   [M1.13]
         types.py            # DailyDecision frozen dataclass           [M1.13]
+      collar_builder/       # M1.11a — first-class structural-strategy engine
+        build.py            # build() entry; dispatches per-intent     [M1.11a]
+        structures.py       # zero_cost / income / defensive solvers   [M1.11a]
+        leg_factory.py      # OptionContract → CollarLeg helpers       [M1.11a]
+        types.py            # CollarIntent + CollarLeg + CollarStructure [M1.11a]
   shared-types/     # TS types generated from Pydantic                  [shipped M0.6]
     src/            # generated regimes.ts / profiles.ts / types.ts
     scripts/

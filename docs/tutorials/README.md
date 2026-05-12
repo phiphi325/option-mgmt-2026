@@ -16,6 +16,7 @@ Both styles are deliberately deeper than the auto-generated OpenAPI spec — the
 | [flow-score-engine.md](./flow-score-engine.md) | Same audience; read after `market-state-engine.md` and `scoring-primitives.md` (depends on `*ScoreResult` pattern, `gamma_score` sign/magnitude split, OI walls, max pain, expected move) | ~70 min careful read · ~30 min skim |
 | [confidence-composer.md](./confidence-composer.md) | Same audience; read after `market-state-engine.md`, `scoring-primitives.md`, and `flow-score-engine.md` (depends on `MarketStateResult.regime_score` / `trend_strength` / `breakout_signal` / `oi_concentration_at_max_pain` / `days_to_next_event`, `FlowScore.confidence` / `score`, and the §22.13 multiplicative-penalty redesign) | ~55 min careful read · ~20 min skim |
 | [master-decision-engine.md](./master-decision-engine.md) | Same audience; **capstone** — read after all four upstream tutorials. Wires every engine into a single replayable `DailyDecision`. Covers the §9.6 pipeline, two-stage `compose()`, `inputs_hash` canonical JSON, `decision_id` determinism, and the three-pin replay lock. | ~50 min careful read · ~20 min skim |
+| [collar-builder.md](./collar-builder.md) | Same audience; read after the capstone. Standalone first-class engine for the long-stock structural strategy — 3 intents (`zero_cost`/`income`/`defensive`), grid-search solver, sign conventions for `CollarLeg.premium`, integration plan with Master Decision Engine (M1.11b pending). | ~45 min careful read · ~15 min skim |
 
 ## Index — API-layer references
 
@@ -48,7 +49,7 @@ These engine modules are on `main` but don't yet have a pedagogical tutorial. Ad
 #### API-layer (endpoints shipped or planned but not yet covered)
 
 - **CSV-import + profile + outcomes** (`/api/v1/{profile, outcomes, data/*, market/*}`, M1.17 + M1.17.5) — **now covered** in [`engine-api-reference.md` §§12–16](./engine-api-reference.md#12-profile--user-strategy-profile-m117) alongside the engine surface. The file kept its `engine-api-reference` slug for link stability; coverage broadened with M1.17.5.
-- **Today screen client integration** (Next.js consumer of `/engine/daily-plan`, M1.18 — not yet shipped). When M1.18 lands, write a separate tutorial covering the typed-client patterns (server-component fetch, RFC 7807 error handling, `data_freshness` badge rendering). Distinct enough from the API reference (TS vs. JSON) to deserve its own file.
+- **Today screen client integration** (Next.js consumer of `/engine/daily-plan`, M1.18 — **shipped**, [PR #53](https://github.com/csupenn/option-mgmt-2026/pull/53)). The typed-client patterns are working in production but don't yet have a long-form tutorial. When the tutorial lands, it should cover: server-component fetch, RFC 7807 error handling, `data_freshness` badge rendering, the M1.17.5 hydration-error CTA flow, and the typed `DailyDecisionResponse` projection. Distinct enough from the API reference (TS vs. JSON) to deserve its own file.
 
 #### Templates
 
