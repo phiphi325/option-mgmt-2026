@@ -12,6 +12,103 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [1.3.0] — 2026-05-12
+
+### Added (engine — `engine.execution.downgrade`, M1.12 callback)
+
+- **`engine.execution.downgrade_if_needed(...)`** — M1.12 Execution downgrade callback per plan v1.2 §9.8 (last paragraph) + §17 M1.12. Pure function (per ADR-0005) that orchestrates a "re-run Strike Selector with adjusted filters" loop when any per-leg `fill_confidence` drops below `DOWNGRADE_THRESHOLD` (0.50). Signature:
+  ```python
+  def downgrade_if_needed(
+      *,
+      action: Action,
+      chain_snapshot: ChainSnapshot,
+      risk_free_rate: float = 0.05,
+      dividend_yield: float = 0.0,
+      threshold: float = DOWNGRADE_THRESHOLD,
+      quantities: Sequence[int] | None = None,
+  ) -> DowngradeResult: ...
+  ```
+- **`engine.execution.DowngradeResult`** — frozen dataclass carrying both the original and the final `(StrikeSelection, Execution)` pair, plus `iterations` (0 if no retry needed), `escalated` (True when the ladder couldn't rescue), and `downgrade_notes` (human-readable audit trail). Returned to callers so they can show the user "the rule wanted X, but downgrade re-routed to Y" alongside the M1.10 confidence breakdown.
+- **`engine.execution.filter_chain_by_liquidity(chain_snapshot, *, min_oi=0, min_volume=0, max_spread_bps=None) -> ChainSnapshot`** — chain pre-filter helper. Returns a new `ChainSnapshot` keeping only contracts that clear `min_oi`, `min_volume`, and (when set) `max_spread_bps`. Reusable beyond M1.12 — the Master Decision Engine (M1.13) and the M1.16 `/engine/strike-candidates` endpoint will use it.
+
+### V1 downgrade ladder (escalating liquidity floors)
+
+| Rung | `min_oi` | `min_volume` | `max_spread_bps` | Intent |
+|---|---:|---:|---:|---|
+| 0 (original) | — | — | — | The rule's first-choice strike |
+| 1 | 500 | 50 | 200 | Typical MSFT weekly ATM should clear; far-OTM may not |
+| 2 | 2000 | 100 | 100 | Only the most active strikes; last-resort |
+
+If no rung passes the threshold, `escalated=True` is returned with the best-so-far selection (tracked by per-leg `min(fill_confidence)`). The Master Decision Engine (M1.13) reads this signal and decides whether to:
+  - accept the weaker fill with the higher M1.10 illiquidity penalty, OR
+  - downgrade the rule outcome to `NO_OP` entirely
+
+Ladder values are V1 priors documented inline as module-private constants. Phase 4 ML may learn rung definitions; the `(min_oi, min_volume, max_spread_bps)` shape is the replaceable contract.
+
+### Behavior summary
+
+- **Original passes**: `iterations=0`, `escalated=False`, `final == original`, no notes.
+- **Empty selection** (REDUCE_COVERAGE / MONETIZE_PUT / NO_OP): never downgraded — there's no concrete leg to relocate. `iterations=0`, `escalated=False`.
+- **Rung succeeds**: `iterations=N` for first successful rung, `escalated=False`, `final` replaces `original`.
+- **Rung loses a leg** (e.g. collar's put filtered out by stricter OI gate): rung is skipped with a "leg count != original; skip" note — preserves multi-leg structural integrity.
+- **No rung succeeds**: `iterations=len(_DOWNGRADE_LADDER)`, `escalated=True`, `final` is the best-so-far rung result (best per-leg `min(fill_confidence)`).
+- **Pure function**: no I/O, no clock; same `(action, chain_snapshot)` → byte-identical `DowngradeResult`.
+
+### Integration with `recommend()`
+
+No engine-side changes required. M1.13 will wire:
+
+```python
+from engine.execution import downgrade_if_needed, liquidity_penalty
+from engine.recommendation import recommend
+
+result = downgrade_if_needed(action=action, chain_snapshot=chain)
+penalty = liquidity_penalty(result.final_execution)
+
+rec = recommend(
+    market_state=ms,
+    flow_score=fs,
+    positions=positions,
+    profile=profile,
+    rules=rules,
+    illiquidity_penalty=penalty,
+)
+```
+
+When the downgrade rescues the action, the post-ladder `liquidity_penalty` is smaller than the pre-ladder one — `recommend()`'s composer applies the v2.0 `weights.yaml` liquidity cap (0.25) and produces a higher `confidence`. The PR test suite pins this integration with `test_downgrade_improves_recommend_confidence`.
+
+### Tests
+
+- 27 new tests in `tests/test_execution_downgrade.py`; **100% line coverage** on `engine.execution.downgrade` (78 statements, 0 missed).
+- `filter_chain_by_liquidity`: default kwargs identity, per-gate behavior (OI / volume / spread), broken-quote handling (sentinel-aware), combined gates, metadata preservation, empty chain.
+- `downgrade_if_needed`: original passes (no retry), rung 1 succeeds, ladder exhausted with `escalated=True`, "no contracts cleared the floor" skip path, empty-original bypass for NO_OP / REDUCE_COVERAGE / MONETIZE_PUT, leg-count-mismatch rung skip, partial-improvement best-so-far tracking, determinism, custom threshold kwarg.
+- Integration: `liquidity_penalty(result.final_execution)` plugged into `recommend(illiquidity_penalty=...)` → confidence improves vs. pre-downgrade penalty. Escalated path keeps high penalty → confidence drops via composer's multiplicative liquidity cap.
+- Frozen-dataclass invariant: mutation raises `dataclasses.FrozenInstanceError`.
+- Consistency: `assess(result.final_selection.legs)` equals `result.final_execution` (no hidden state in the downgrade loop).
+- Total engine tests: **300 → 327** (+27).
+
+### Migration
+
+No breaking changes. Existing callers of `engine.execution.assess()` keep working. New callers that want to react to weak fills:
+
+```python
+from engine.execution import downgrade_if_needed
+
+result = downgrade_if_needed(action=action, chain_snapshot=chain)
+if result.escalated:
+    # The chain is genuinely too illiquid for this action; consider NO_OP.
+    ...
+else:
+    # Use result.final_selection (and result.final_execution) downstream.
+    ...
+```
+
+### Plan deviation
+
+Plan §9.8 describes the downgrade as "the Recommendation Engine receives a callback to propose nearby strikes with better liquidity (re-runs Strike Selector with adjusted filters)." M1.12 implements this by pre-filtering the `ChainSnapshot` rather than by adding kwargs to `select_strikes()` — keeps the Strike Selector contract clean (it does delta + DTE matching against eligible contracts; M1.12 decides what "eligible" means at each ladder rung).
+
+---
+
 ## [1.2.0] — 2026-05-12
 
 ### Added (engine — `engine.execution`, new module per plan §9.8)

@@ -25,10 +25,13 @@ from engine.confidence import (
 )
 from engine.execution import (
     DOWNGRADE_THRESHOLD,
+    DowngradeResult,
     Execution,
     ExecutionLeg,
     OrderType,
     assess,
+    downgrade_if_needed,
+    filter_chain_by_liquidity,
     liquidity_penalty,
 )
 from engine.flow_score import (
@@ -88,6 +91,7 @@ from engine.version import __version__
 __all__ = [
     "DEFAULT_WEIGHTS",
     "DOWNGRADE_THRESHOLD",
+    "DowngradeResult",
     "EVENT_KIND_WEIGHTS",
     "REGIME_COLORS",
     "Action",
@@ -136,7 +140,9 @@ __all__ = [
     "compute_dealer_gamma_proxy",
     "compute_oi_walls",
     "delta",
+    "downgrade_if_needed",
     "event_score",
+    "filter_chain_by_liquidity",
     "gamma",
     "gamma_score",
     "iv_score",
