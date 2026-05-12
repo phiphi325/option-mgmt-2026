@@ -1,0 +1,67 @@
+# Phase 1 — Engine MVP
+
+Phase 1 ships the engine-first MVP per master plan §17. Aggregate size: ~5 weeks (revised from 4 to absorb the v1.1 patch additions). Acceptance: see master plan §19 "Definition of Phase 1 Done".
+
+## Milestone roster (from master plan §17)
+
+| ID | Milestone | Size | Status | Dev spec |
+|---|---|---|---|---|
+| M1.1 | IV rank/percentile + HV computations | S | shipped | — (see retrospective) |
+| M1.2 | Max pain + expected move + PCR | S | shipped | — |
+| M1.3 | Trend strength proxy + technical context | S | shipped | — |
+| M1.4 | Market State Engine + 24 regime fixtures | L | shipped | — |
+| M1.4a | iv/structure/event scoring pure fns (v1.1 patch) | M | shipped | — |
+| M1.5 | Flow Score Engine + OI walls + dealer-gamma proxy | M | shipped | — |
+| M1.5a | gamma_score pure fn (v1.1 patch) | S | shipped | — |
+| M1.5b | Flow Score V1 contract refit (v1.1 patch) | M | shipped | — |
+| M1.6 | Black-Scholes + Greeks + IV solver | M | shipped | — |
+| M1.7 | Strike Selector core | L | shipped | — |
+| M1.8 | Recommendation Engine + regime-strategy whitelist | M | shipped | — |
+| M1.9 | Recommendation Engine: 8 YAML rules + tests | M | shipped | — |
+| M1.10 | Confidence Composer + weights.yaml | M | shipped | — |
+| M1.11 | Execution Feasibility Module | M | shipped | — |
+| M1.11a | Collar Builder engine (v1.1 patch) | L | shipped | — |
+| M1.11b | Collar Builder integration into Master Decision (v1.1) | M | shipped | — |
+| M1.12 | Execution downgrade callback | S | shipped | — |
+| M1.13 | Master Decision Engine orchestration | M | shipped | — |
+| M1.14 | `/engine/daily-plan` + `/engine/recommend` endpoints | S | shipped | — (PR #45) |
+| M1.15 | `/engine/what-if` + `/engine/market-state` + `/engine/flow-score` | S | **planned** | [`m1.15-engine-readonly-endpoints.md`](./m1.15-engine-readonly-endpoints.md) |
+| M1.16 | `/engine/strike-candidates` + `/engine/execution-check` (+ v1.1: M1.16a `/engine/collar-builder`, M1.16b `/health`/`/version`/`/market/msft/latest`) | S | **planned** | [`m1.16-strike-execution-endpoints.md`](./m1.16-strike-execution-endpoints.md) |
+| M1.17 | `/profile` + `/outcomes` + CSV upload endpoints | M | **planned** | [`m1.17-profile-outcomes-csv-import.md`](./m1.17-profile-outcomes-csv-import.md) |
+| M1.18 | Today screen scaffolding + DecisionCard + StrategyTitle | M | **planned** | [`m1.18-today-screen-scaffolding.md`](./m1.18-today-screen-scaffolding.md) |
+| M1.19 | ActionList + ActionRow + ExecutionBadge | S | planned (Phase 1 cont.) | TBD |
+| M1.20 | ConfidenceBreakdownChart + ExecutionFeasibilityPanel | S | planned | TBD |
+| M1.21 | WatchLevels + Drawer (Rationale, Risks, Invalidation) | S | planned | TBD |
+| M1.22 | User Strategy Profile UI + persona presets | M | planned | TBD |
+| M1.23 | Outcome manual entry + history view | M | planned | TBD |
+| M1.24 | Golden tests (12 DailyDecision snapshots) | M | planned | TBD |
+| M1.25 | Calibration tests + Playwright E2E + polish | M | planned | TBD |
+
+## Status legend
+
+- **shipped** — merged to main; row in retrospective summary links to PR.
+- **in-progress** — branch open, PR pending. The dev spec is the working contract.
+- **planned** — dev spec authored, no branch yet. Awaiting the prior milestone to merge.
+
+## Forward-looking dev spec template
+
+Every forward dev spec under this folder follows the same eight-section template. Skim any one (e.g. [`m1.15-engine-readonly-endpoints.md`](./m1.15-engine-readonly-endpoints.md)) for the shape:
+
+1. **Front matter** — id, size, dependencies, status, plan refs
+2. **Goal** — 1–2 sentences
+3. **What ships** — bulleted endpoints / migrations / services
+4. **Request / response schemas** — Pydantic-shape pseudocode (canonical names from §7)
+5. **DB migrations** — table/column/constraint deltas, or "no schema change"
+6. **Tests** — unit + smoke matrix
+7. **Acceptance criteria** — verifiable bullets
+8. **Open questions / risks** — max 5 items
+
+Target length: 2–4 printed pages each. Bigger is a sign the milestone should be split.
+
+## Why M1.15 first, not data-import?
+
+A common misconception (carried over from the M1.14 PR body): "M1.15+ hydrates from DB". That's wrong. Per master plan §17, M1.15 is the read-only engine sub-step endpoints, not data import. The data-import path is **M1.17** (CSV upload to `positions` / `option_positions` / `option_chain_snapshots`). The "`DailyPlanRequest.inputs` becomes optional" unblock waits for M1.17 to ship — see [`m1.17-profile-outcomes-csv-import.md`](./m1.17-profile-outcomes-csv-import.md) §"Unblocks".
+
+## Phase 1.5 — GEX Module
+
+Phase 1.5 (ME1.0 – ME1.7) ships after M1.25 per ADR-0008. It is NOT documented in this folder; when Phase 1.5 starts, create `docs/phased-design/phase-1.5/` with its own README and per-milestone docs.
