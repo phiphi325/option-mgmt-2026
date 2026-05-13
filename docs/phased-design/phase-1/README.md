@@ -35,7 +35,7 @@ Phase 1 ships the engine-first MVP per master plan §17. Aggregate size: ~5 week
 | M1.21 | WatchLevels + Drawer (Rationale, Risks, Invalidation) | S | planned | TBD |
 | M1.22 | User Strategy Profile UI + persona presets | M | planned | TBD |
 | M1.23 | Outcome manual entry + history view | M | planned | TBD |
-| M1.24 | Golden tests (12 DailyDecision snapshots) | M | planned | TBD |
+| M1.24 | Golden tests (12 DailyDecision snapshots) + companion tooling housekeeping (CHANGELOG drift guard + `Settings` engine_version/weights_version consolidation) | M | planned | [`m1.24-master-decision-goldens.md`](./m1.24-master-decision-goldens.md) — 12 named fixtures under `tests/fixtures/master_decisions/` + parametrized `pytest` replay harness + canonical-JSON serializer + regeneration script. Bundles `scripts/check_changelog_entry.sh` and `Settings` consolidation so the `/version` endpoint reports the live engine value. Closes 3 of the 4 remaining Phase 1 Done bar items; M1.25 closes the last (Playwright E2E). |
 | M1.25 | Calibration tests + Playwright E2E + polish | M | planned | TBD |
 
 ## Status legend
