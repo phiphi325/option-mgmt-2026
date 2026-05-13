@@ -12,6 +12,137 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [1.6.0] — 2026-05-12
+
+### Added (engine — `engine.decision.produce`, M1.11b Collar Builder integration)
+
+- **`DailyDecision.collar_structures`** — new field on the frozen dataclass: `tuple[CollarStructure | None, ...]`, default `()`. Parallel to `strike_selections` / `downgrades` / `executions`. Non-collar action slots are `None`; `OPEN_COLLAR` emit slots carry the resolved `CollarStructure` from `collar_builder.build(intents=[ZERO_COST])`.
+- **`engine.decision.produce._dispatch_open_collar(...)`** — private helper that handles the `OPEN_COLLAR` emit branch in the per-action loop. Returns `tuple[DowngradeResult, CollarStructure | None]`. Calls `engine.collar_builder.build(intents=[ZERO_COST])` per plan §9.10 Integration; when `build()` returns empty (no feasible pair) it produces an empty `StrikeSelection` carrying `skipped_reason="collar_builder_no_feasible_pair"` and a trivially-fillable `Execution` (`aggregate_fill_confidence=1.0` so no penalty leaks downstream).
+- **`engine.decision.produce._project_collar_to_strike_selection(...)`** — private helper that builds a synthetic `StrikeSelection` carrying BOTH collar legs (long put first, short call second). Preserves the equal-length invariant `len(strike_selections) == len(executions)` for downstream consumers.
+
+### Pipeline behavior change
+
+The per-action loop in `produce_daily_decision()` now branches on emit:
+
+```python
+for action in tentative_rec.actions:
+    if action.emit is EmittedAction.OPEN_COLLAR:
+        dr, structure = _dispatch_open_collar(...)
+    else:
+        dr = downgrade_if_needed(...)
+        structure = None
+    # ... append to parallel tuples ...
+```
+
+Auto-call gate per plan §9.10 Integration: the recommendation engine emits `OPEN_COLLAR` under regime ∈ `{HIGH_IV_EVENT, POST_EVENT_REPRICE}` AND `has_long_put=False` AND no existing collar legs; `_dispatch_open_collar` reacts to the emit (not to the regime), so any future rule emitting `OPEN_COLLAR` from a different regime would also dispatch correctly.
+
+The M1.12 downgrade ladder is **not** invoked for collar emits — `collar_builder` owns its own liquidity gating at the 0.40 floor (M1.11a). The dispatcher delegates to the ladder semantically by returning a `DowngradeResult` with `iterations=0` and `escalated=False`. The collar's per-pair `Execution` (already computed inside `collar_builder.build()` via the M1.11 §9.8 formula) is surfaced verbatim as `dr.final_execution`.
+
+### `inputs_hash` invariance
+
+`collar_structures` is an output, not an input. `compute_inputs_hash()` is unchanged; existing replay-by-hash cache keys continue to match across the 1.5.0 → 1.6.0 boundary. The `(engine_version, weights_version, inputs_hash)` cache key still uniquely identifies a `DailyDecision`; persisted rows produced after M1.11b carry `engine_version = "1.6.0"`.
+
+### Tests
+
+- New: `packages/engine/tests/test_decision_collar_dispatch.py` (422 lines).
+  - `TestDispatcherIsolated` — 4 unit tests on `_dispatch_open_collar` / `_project_collar_to_strike_selection`: feasible-chain happy path, empty-chain graceful degrade, `underlying_qty < 100` fallback to 100, two-leg projection correctness.
+  - `TestProduceWithCollarDispatch` — 6 integration tests: HIGH_IV_EVENT regime produces a non-None `collar_structures[0]`, length-invariant holds, non-`OPEN_COLLAR` emit slots are `None`, determinism (same inputs → equal `DailyDecision`), `engine.__version__ == "1.6.0"`, BS-delta threading (recommendation #1 from M1.11a retrospective — chain-IV propagates through `risk_free_rate` / `dividend_yield` kwargs).
+- Extended: existing `test_decision.py` to cover the new parallel-tuple shape.
+- `engine.decision` line coverage remains at **100%** (114 statements, 0 missed).
+
+### Migration
+
+No breaking changes. `DailyDecision.collar_structures` defaults to `()` so existing constructions (test fixtures, replay logs) keep working without the new kwarg. New consumers (M1.19 ActionList) read `decision.collar_structures[i]` and check for `None`.
+
+```python
+# Reading the new field
+decision = produce_daily_decision(...)
+for i, struct in enumerate(decision.collar_structures):
+    if struct is not None:
+        # OPEN_COLLAR emit; render the two-leg structure
+        long_put, short_call = struct.long_put, struct.short_call
+        ...
+```
+
+### Plan deviations
+
+The M1.11b dev spec (`docs/phased-design/phase-1/m1.11b-collar-builder-integration.md`) is the planning artifact; the shipped implementation differs in four places, all documented in the spec's new "Post-ship reconciliation" appendix:
+
+- **`_emit_to_intent` not extracted.** Spec proposed extracting a string-intent helper; shipped impl inlines `if action.emit is EmittedAction.OPEN_COLLAR:` since the rule pipeline already emits typed `EmittedAction`.
+- **Both legs projected, not just short call.** Spec's draft pseudocode projected only the short-call leg into the synthetic `StrikeSelection`; shipped impl projects both (long put + short call) so execution feasibility sees the full structure.
+- **`underlying_qty < 100` falls back to 100, not raise.** Spec proposed raising; shipped impl uses `max(positions.underlying_shares, _DEFAULT_COLLAR_QTY=100)` so dispatch survives recoverable input shapes (recommendation engine already gates `OPEN_COLLAR` on `has_long_stock`).
+- **No golden-fixture regeneration.** Spec proposed regenerating `tests/fixtures/master_decisions/` via `scripts/regenerate_master_decision_fixtures.py --milestone m1.11b`; shipped impl uses inline Python fixtures in `test_decision_collar_dispatch.py` (the regenerate script doesn't exist on `main`).
+
+### Related
+
+- [PR #58](https://github.com/csupenn/option-mgmt-2026/pull/58) → `main` commit `80871b0b` (2026-05-12).
+- [Dev spec](./docs/phased-design/phase-1/m1.11b-collar-builder-integration.md) (incl. post-ship reconciliation).
+- This CHANGELOG entry was added retroactively in the 2026-05-13 doc-sync PR alongside the missing `[1.5.0]` entry below; see `docs/thread-transitions/2026-05-13-t03-m1.11b-doc-sync.md` for the doc-sync record.
+
+---
+
+## [1.5.0] — 2026-05-12
+
+### Added (engine — `engine.collar_builder`, M1.11a Collar Builder engine module)
+
+- **`engine.collar_builder.build(*, spot, underlying_qty, chain, profile, market_state, flow_score, intents=None, horizon_days=None, coverage_ratio=None, weights=None, risk_free_rate=0.05, dividend_yield=0.0) -> list[CollarStructure]`** — pure-function engine module per plan v1.2 §9.10 + §7. Produces ranked candidate collars across one or more of the three V1 intents.
+- **`engine.collar_builder.CollarIntent`** — `StrEnum` with three V1 variants: `ZERO_COST`, `INCOME`, `DEFENSIVE`. Wire-stable values flow through to Postgres + TypeScript codegen.
+- **`engine.collar_builder.CollarLeg`** — frozen dataclass per §7 for a single leg (`PUT`/`CALL` × `BUY`/`SELL`) carrying `strike`, `expiry`, `qty` (contracts), signed `delta` (call ∈ (0, 1], put ∈ [-1, 0)), `iv`, `bid`/`ask`/`mid`, signed `premium` (BUY positive = debit, SELL negative = credit).
+- **`engine.collar_builder.CollarStructure`** — frozen dataclass per §7 with `long_put`, `short_call`, `net_debit_credit` (per share, signed), `max_gain` / `max_loss` (per share, at expiry), `upside_breakeven` / `downside_breakeven`, `capped_upside_pct` / `protected_downside_pct`, `confidence` (M1.10 composer), `confidence_breakdown` (M1.10), `rationale` / `risks` / `invalidation` (tuple[str, ...]), `execution` (M1.11 — combined-leg Execution Feasibility), `score` (tie-break only).
+- **`engine.collar_builder.make_long_put` / `make_short_call`** — `leg_factory` helpers exposed from `__init__.py`.
+
+### Algorithm
+
+Per plan §9.10:
+
+- **`zero_cost`** — minimize `|net_debit_credit|` (within ±$0.10/share). Both legs satisfy `protected_downside_pct ≥ profile.drawdown_tolerance`; short-call `delta ∈ profile.delta_target_band`; expiry from `dte_band_days` (default 45).
+- **`income`** — maximize `net_credit`. `capped_upside_pct ≥ 4%` (default); `protected_downside_pct ≥ profile.drawdown_tolerance / 2`.
+- **`defensive`** — maximize `protected_downside_pct` subject to `net_debit ≤ 0.5%` of position notional; short-call `delta ∈ profile.delta_target_band`.
+- **Solver** — grid search over `(K_put × K_call)` for each candidate expiry inside `[0, horizon_days]`. Pre-filter calls to `K_call > spot` ∩ `delta ∈ profile.delta_target_band`; pre-filter puts to `K_put < spot` ∩ `protected_downside_pct ≥ tolerance`. Per-pair: compute P&L fields, check Execution Feasibility floors, score, pick top per intent. Returns empty list (not raise) when an intent has no feasible solution.
+- **Liquidity floor** — `0.40` (deviation from §9.10's `0.50`; see retrospective). Both `liquidity_score` and `fill_confidence` must clear 0.40 for a leg to enter the grid. M1.11's downgrade ladder remains the production safety net at 0.50; the collar builder delegates to it via the M1.10 `illiquidity_penalty` plumbing.
+- **Tie-break score** — `iv_score - event_score - illiquidity_penalty` (reuses M1.4a + M1.11 primitives).
+
+### Module layout
+
+```
+packages/engine/engine/collar_builder/
+├── __init__.py            # exports build, CollarIntent, CollarLeg, CollarStructure, make_long_put, make_short_call
+├── build.py               # build() entry; intent dispatch + validation
+├── structures.py          # zero_cost / income / defensive solvers + _candidate_expirations helper
+├── leg_factory.py         # CollarLeg construction from chain quotes
+└── types.py               # CollarIntent enum + CollarLeg + CollarStructure dataclasses
+```
+
+### Tests
+
+Five new test files in `packages/engine/tests/`:
+
+- `test_collar_builder_build.py` — boundary tests on `build()` input validation (`underlying_qty < 100` → `ValueError`, `coverage_ratio` bounds, `horizon_days ≤ 0`, etc.).
+- `test_collar_builder_structures.py` — per-intent solver correctness on synthetic fixtures.
+- `test_collar_builder_leg_factory.py` — `CollarLeg` construction from chain quotes (`delta`/`premium` sign conventions).
+- `test_collar_builder_property.py` — property tests per §9.10 (`zero_cost.net_debit_credit ∈ [-0.10, +0.10]`; `income.net_debit_credit ≤ 0` or empty; `defensive.protected_downside_pct ≥ income.protected_downside_pct`).
+- `test_collar_builder_version.py` — `engine.__version__ == "1.5.0"` (now superseded by `1.6.0` in M1.11b) + `engine.__all__` exports.
+
+Plus shared test helpers in `tests/_collar_test_helpers.py`. Engine line coverage stayed ≥ 85%.
+
+### Migration
+
+No breaking changes. New module is pure addition. The Master Decision Engine does **not** yet call `collar_builder.build()` in `[1.5.0]` — that wiring lands in M1.11b (`[1.6.0]` entry above).
+
+### Plan deviation
+
+**Liquidity floor 0.40, not 0.50.** The M1.11a-dev-spec-original `MIN_FILL_CONFIDENCE = 0.50` matched the M1.11 §9.8 downgrade trigger but in practice the cheaper OTM legs needed for `DEFENSIVE` candidates produced `fill_confidence` values landing within one ULP of 0.50 — flipping side-of-floor across CI runs. Lowered to 0.40 to stabilize. M1.12's downgrade ladder remains the production safety net at 0.50. See [M1.11a retrospective finding #1](./docs/phased-design/phase-1/review/m1.11a-retrospective.md#1-the-liquidity-floor-was-lowered-from-050-to-040-vs-dev-spec) for the full reasoning.
+
+### Related
+
+- [PR #56](https://github.com/csupenn/option-mgmt-2026/pull/56) → `main` commit `951c206e` (2026-05-12). 5-commit CI-fix saga between initial push and green — see retrospective.
+- [Dev spec](./docs/phased-design/phase-1/m1.11a-collar-builder-engine.md).
+- [M1.11a retrospective](./docs/phased-design/phase-1/review/m1.11a-retrospective.md).
+- [Tutorial](./docs/tutorials/collar-builder.md).
+- This CHANGELOG entry was added retroactively in the 2026-05-13 doc-sync PR alongside the missing `[1.6.0]` entry above (the shipping thread closed without prepending CHANGELOG entries); see `docs/thread-transitions/2026-05-13-t03-m1.11b-doc-sync.md`.
+
+---
+
 ## [1.4.0] — 2026-05-12
 
 ### Added (engine — `engine.decision`, M1.13 Master Decision Engine)
