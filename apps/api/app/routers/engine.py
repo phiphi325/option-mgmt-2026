@@ -1,10 +1,10 @@
 """Engine endpoints — read/write surface on the M1.13 pipeline.
 
-Per plan v1.2 §7 + §22.14 + §17 M1.14 + M1.15 + M1.16.
+Per plan v1.2 §7 + §22.14 + §17 M1.14 + M1.15 + M1.16 + M1.16a.
 
 All endpoints require authentication (JWT-decoded user_id). The
-business logic lives in `app.services.decision_service`; this module
-is a thin HTTP-shape layer.
+business logic lives in `app.services.*`; this module is a thin
+HTTP-shape layer.
 
   POST /engine/daily-plan        → DailyDecisionResponse       (200 + persisted row)
   POST /engine/recommend         → RecommendResponse           (200; no persistence)
@@ -13,11 +13,7 @@ is a thin HTTP-shape layer.
   POST /engine/flow-score        → FlowScoreResponse            (200; compute() only)
   POST /engine/strike-candidates → StrikeCandidatesResponse     (200; select_strikes() only)
   POST /engine/execution-check   → ExecutionCheckResponse       (200; assess() only)
-
-Future endpoints in the same router:
-  POST /engine/collar-builder    (M1.16a; deferred — requires M1.11a engine module
-                                  `packages/engine/engine/collar_builder/` which
-                                  is not yet shipped.)
+  POST /engine/collar-builder    → list[CollarStructureResponse] (200; build() only)
 """
 
 from __future__ import annotations
@@ -44,7 +40,12 @@ from app.schemas.decision import (
     WhatIfRequest,
     WhatIfResponse,
 )
-from app.schemas.engine import decision_to_jsonable_dict
+from app.schemas.engine import (
+    CollarBuilderRequest,
+    CollarStructureResponse,
+    decision_to_jsonable_dict,
+)
+from app.services.collar_builder_service import run_collar_builder
 from app.services.decision_service import (
     produce_and_persist,
     run_execution_check,
@@ -327,3 +328,52 @@ async def execution_check(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return ExecutionCheckResponse(execution=decision_to_jsonable_dict(result))
+
+
+# ----------------------------------------------------------------------
+# M1.16a — collar builder standalone endpoint
+# ----------------------------------------------------------------------
+
+
+@router.post(
+    "/collar-builder",
+    response_model=list[CollarStructureResponse],
+    summary="Build ranked collar candidates for up to 3 intents (no persistence)",
+)
+async def collar_builder(
+    request: CollarBuilderRequest,
+    session: SessionDep,
+    user_id: AuthedUserDep,
+) -> list[CollarStructureResponse]:
+    """V1 collar-builder endpoint per plan §7 + §9.10 + §22.11 H5.
+
+    Runs `engine.collar_builder.build()` for each requested intent
+    (ZERO_COST, INCOME, DEFENSIVE) and returns a ranked list of
+    `CollarStructure` candidates — typically three, one per intent.
+
+    Key properties (per plan §9.10):
+
+      - `underlying_qty` is resolved from the caller's `positions` DB rows
+        (§22.11 H5). It is NOT accepted in the request body; passing it
+        raises 422 via Pydantic `extra="forbid"`.
+      - The response list is intent-ordered (ZERO_COST first, then INCOME,
+        then DEFENSIVE — matching the `intents` input order). Intents with
+        no feasible collar are absent from the list (not null-padded).
+      - NEVER persists. The endpoint is read-only; use `/engine/daily-plan`
+        for the full pipeline with DB persistence.
+
+    Raises 422 on:
+      - Unsupported ticker (Phase 1: MSFT only)
+      - No option chain ingested for the ticker (`missing_chain`)
+      - Fewer than 30 IV history rows (`insufficient_iv_history`)
+      - Fewer than 100 underlying shares (`insufficient_shares`)
+      - Engine ValidationError (malformed coverage_ratio or horizon_days)
+    """
+    try:
+        return await run_collar_builder(
+            session=session,
+            user_id=user_id,
+            request=request,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

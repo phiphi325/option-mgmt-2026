@@ -31,6 +31,13 @@ This split keeps the API contract explicit on input validation (where
 typing matters for client error messages) and pragmatic on output
 serialization (where the engine's dataclasses are already the
 source-of-truth shape).
+
+### M1.16a additions
+
+`CollarBuilderRequest`, `CollarLegResponse`, and `CollarStructureResponse`
+expose the collar builder engine module (M1.11a) as a typed API surface.
+`CollarStructureResponse.from_engine()` projects the engine's frozen
+`CollarStructure` dataclass into the Pydantic response shape.
 """
 
 from __future__ import annotations
@@ -39,8 +46,9 @@ import dataclasses
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
+from engine.collar_builder import CollarIntent
 from engine.flow_score.types import Bias, FlowScore, RecommendedAction
 from engine.market_state.classify import MarketStateResult
 from engine.recommendation.types import PositionState
@@ -247,7 +255,158 @@ def decision_to_jsonable_dict(decision: Any) -> dict[str, Any]:
     return result
 
 
+# ----------------------------------------------------------------------
+# M1.16a — Collar Builder request / response schemas
+# ----------------------------------------------------------------------
+
+
+class CollarBuilderRequest(BaseModel):
+    """Request body for POST /engine/collar-builder.
+
+    Per plan §7 + §22.11 H5.
+
+    Note: `underlying_qty` is intentionally absent — it is resolved from
+    the DB at the service layer (§22.11 H5) to prevent callers from
+    bypassing the position-ownership check.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: str = Field(
+        default="MSFT",
+        description="Underlying ticker. Phase 1: 'MSFT' only.",
+    )
+    intents: list[CollarIntent] = Field(
+        default=[CollarIntent.ZERO_COST, CollarIntent.INCOME, CollarIntent.DEFENSIVE],
+        description=(
+            "Collar intents to build. Result list is intent-ordered "
+            "(ZERO_COST → INCOME → DEFENSIVE); infeasible intents are omitted."
+        ),
+    )
+    coverage_ratio: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fraction of position to collar. Defaults to "
+            "profile.max_coverage_pct when None."
+        ),
+    )
+    horizon_days: int | None = Field(
+        default=None,
+        ge=1,
+        le=120,
+        description=(
+            "Max DTE for candidate expiries. Defaults to 45 days "
+            "(collar_builder.DEFAULT_HORIZON_DAYS) when None."
+        ),
+    )
+
+
+class CollarLegResponse(BaseModel):
+    """API projection of `engine.collar_builder.CollarLeg`.
+
+    All numeric fields are float (matching the engine's representation).
+    `premium` sign convention: positive = debit paid by user (BUY side),
+    negative = credit received (SELL side). Per-share.
+    """
+
+    kind: Literal["PUT", "CALL"]
+    side: Literal["BUY", "SELL"]
+    strike: float
+    expiry: date
+    qty: int
+    delta: float
+    iv: float
+    bid: float
+    ask: float
+    mid: float
+    premium: float
+
+
+class CollarStructureResponse(BaseModel):
+    """API projection of `engine.collar_builder.CollarStructure`.
+
+    Includes the full confidence breakdown and execution assessment that
+    `build()` computes internally. The `score` field is the tie-break
+    ranking score within a single intent (NOT the overall confidence).
+
+    P&L fields (`net_debit_credit`, `max_gain`, `max_loss`, breakevens)
+    are per-share floats. Multiply by `long_put.qty * 100` for
+    position-level dollar amounts.
+    """
+
+    name: str
+    intent: CollarIntent
+    horizon_days: int
+    long_put: CollarLegResponse
+    short_call: CollarLegResponse
+    net_debit_credit: float
+    max_gain: float
+    max_loss: float
+    upside_breakeven: float
+    downside_breakeven: float
+    capped_upside_pct: float
+    protected_downside_pct: float
+    confidence: float
+    confidence_breakdown: dict[str, Any]
+    rationale: list[str]
+    risks: list[str]
+    invalidation: list[str]
+    execution: dict[str, Any]
+    score: float = 0.0
+
+    @classmethod
+    def from_engine(cls, s: Any) -> CollarStructureResponse:
+        """Project an engine `CollarStructure` frozen dataclass → this model.
+
+        Uses `to_jsonable()` for nested dataclasses (`confidence_breakdown`,
+        `execution`) so all engine types (enums, dates, nested dataclasses)
+        are serialized recursively.
+        """
+
+        def _leg(leg: Any) -> CollarLegResponse:
+            return CollarLegResponse(
+                kind=leg.kind,
+                side=leg.side,
+                strike=float(leg.strike),
+                expiry=leg.expiry,
+                qty=int(leg.qty),
+                delta=float(leg.delta),
+                iv=float(leg.iv),
+                bid=float(leg.bid),
+                ask=float(leg.ask),
+                mid=float(leg.mid),
+                premium=float(leg.premium),
+            )
+
+        return cls(
+            name=s.name,
+            intent=s.intent,
+            horizon_days=int(s.horizon_days),
+            long_put=_leg(s.long_put),
+            short_call=_leg(s.short_call),
+            net_debit_credit=float(s.net_debit_credit),
+            max_gain=float(s.max_gain),
+            max_loss=float(s.max_loss),
+            upside_breakeven=float(s.upside_breakeven),
+            downside_breakeven=float(s.downside_breakeven),
+            capped_upside_pct=float(s.capped_upside_pct),
+            protected_downside_pct=float(s.protected_downside_pct),
+            confidence=float(s.confidence),
+            confidence_breakdown=to_jsonable(s.confidence_breakdown),
+            rationale=list(s.rationale),
+            risks=list(s.risks),
+            invalidation=list(s.invalidation),
+            execution=to_jsonable(s.execution),
+            score=float(getattr(s, "score", 0.0)),
+        )
+
+
 __all__ = [
+    "CollarBuilderRequest",
+    "CollarLegResponse",
+    "CollarStructureResponse",
     "FlowScoreModel",
     "MarketStateResultModel",
     "PositionStateModel",
