@@ -59,3 +59,6 @@ playwright/.cache/
 *.sqlite3
 /data/
 /seeds/local/
+
+# Scratch / working notes (never committed; promote to docs/ when ready)
+docs/z_temp/

@@ -18,13 +18,24 @@ The current canonical adoption record is [ADR-0008](../decisions/0008-enhancemen
 | E8 | Dividend-Aware Pricing | Adopted | **2–3** | §8 | ADR-0008 |
 | E9 | Assignment Risk Module | Adopted | **3** | §9 | ADR-0008 |
 
+## External statistical-context providers
+
+Enhancements sourced from a **separate external system** (not the v1.2-era `04-...spec-0509.md` E-series).
+Tracked with their own ADR + subfolder, cross-referenced from ADR-0008 but not folded into E1–E9.
+
+| Provider | Title | Status | Phase | Analysis | Decision record |
+|---|---|---|---|---|---|
+| yearline-universe | External MA250 repair/retry statistical context (gated `YearlineContext` value object) | **Proposed** | OM-Y0…Y5 (Phase 1+) | [`0002-yearline-context-assessment.md`](./0002-yearline-context-assessment.md) + [`yearline/`](./yearline/) | [ADR-0009](../decisions/0009-adopt-yearline-statistical-context-provider.md) |
+
 ## How this directory is organized
 
 ```
 docs/enhancements/
 ├── README.md                                       — this file (the index)
 ├── 04-msft-engine-enhancement-spec-0509.md        — source spec, verbatim (1,434 lines)
-├── 0001-assessment-and-adoption-decisions.md      — feasibility assessment + per-enhancement reasoning
+├── 0001-assessment-and-adoption-decisions.md      — feasibility assessment + per-enhancement reasoning (E1–E9)
+├── 0002-yearline-context-assessment.md            — feasibility assessment for the yearline external provider
+├── yearline/                                       — yearline source analysis (verbatim) + producer-handoff/
 └── (future) E1-design.md, E2-design.md, ...       — per-enhancement design notes, written when work starts
 ```
 
