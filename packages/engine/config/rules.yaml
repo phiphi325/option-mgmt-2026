@@ -63,7 +63,7 @@
 
 - id: open_collar_pre_event
   when:
-    regime: HIGH_IV_EVENT
+    regime: ["HIGH_IV_EVENT", "POST_EVENT_REPRICE"]
     days_to_next_event_lte: 7
     has_long_put: false
   emit: OPEN_COLLAR

@@ -1,0 +1,190 @@
+{
+  "as_of": "2026-05-20T14:30:00Z",
+  "collar_structures": [
+    null
+  ],
+  "confidence": 0.2303,
+  "confidence_breakdown": {
+    "event_risk_penalty": 0.0,
+    "flow_alignment": 0.076,
+    "illiquidity_penalty": 0.0,
+    "penalty_multiplier": 1.0,
+    "positive_score": 0.2303,
+    "regime_match": 0.45,
+    "signal_alignment": 0.3,
+    "structure_alignment": 0.14,
+    "weights_version": "v2.0"
+  },
+  "data_freshness": [],
+  "decision_id": "dd_6a832e7dd3e6_1779287400",
+  "disclaimers": [
+    "Educational only",
+    "Not financial advice",
+    "Verify with broker"
+  ],
+  "downgrades": [
+    {
+      "downgrade_notes": [],
+      "escalated": false,
+      "final_execution": {
+        "aggregate_fill_confidence": 1.0,
+        "aggregate_liquidity_score": 1.0,
+        "legs": [],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "final_selection": {
+        "emit": "NO_OP",
+        "legs": [],
+        "skipped_reason": "NO_OP requires no concrete strike selection (close-existing or NO_OP)"
+      },
+      "iterations": 0,
+      "original_execution": {
+        "aggregate_fill_confidence": 1.0,
+        "aggregate_liquidity_score": 1.0,
+        "legs": [],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "original_selection": {
+        "emit": "NO_OP",
+        "legs": [],
+        "skipped_reason": "NO_OP requires no concrete strike selection (close-existing or NO_OP)"
+      }
+    }
+  ],
+  "engine_version": "1.7.0",
+  "escalated": false,
+  "executions": [
+    {
+      "aggregate_fill_confidence": 1.0,
+      "aggregate_liquidity_score": 1.0,
+      "legs": [],
+      "notes": [],
+      "suggested_order_type": "limit"
+    }
+  ],
+  "flow_score": {
+    "bearish_score": 0.25,
+    "bias": "NEUTRAL",
+    "breakdown": {
+      "event": 0.0,
+      "gamma": 0.1,
+      "iv": 0.2,
+      "structure": 0.3
+    },
+    "bullish_score": 0.3,
+    "confidence": 0.15,
+    "explanation": "m1.24 fixture 11 \u2014 range-bound, weak signal",
+    "gamma_risk": 0.1,
+    "gamma_sign": 0,
+    "pin_probability": 0.3,
+    "recommended_action": "WAIT",
+    "score": 0.2
+  },
+  "inputs_hash": "sha256:6a832e7dd3e626341de8e233dfbf39a9a1897e3069d0623b6687e733a171322d",
+  "market_state": {
+    "all_scores": {
+      "BREAKOUT": 0.0,
+      "HIGH_IV_EVENT": 0.0,
+      "HIGH_IV_PIN": 0.0,
+      "LOW_IV_RANGE": 0.45,
+      "LOW_IV_TREND": 0.0,
+      "POST_EVENT_REPRICE": 0.0
+    },
+    "breakout_signal": 0.05,
+    "days_since_event": null,
+    "days_to_nearest_opex": 25,
+    "days_to_next_event": 45,
+    "expected_move_pct": 0.025,
+    "gap_pct": 0.0,
+    "hv_30": 0.18,
+    "iv_percentile": 0.3,
+    "iv_rank": 0.25,
+    "iv_rank_change_1d": -0.005,
+    "max_pain": 410.0,
+    "max_pain_delta_pct": 0.012,
+    "next_event_kind": "earnings",
+    "oi_concentration_at_max_pain": 0.25,
+    "pcr_oi": 1.0,
+    "pcr_volume": 1.05,
+    "realized_vs_implied": 1.05,
+    "regime": "LOW_IV_RANGE",
+    "regime_score": 0.45,
+    "spot": 405.0,
+    "tags": [
+      "m1_24_fixture_11",
+      "ranging"
+    ],
+    "trend_strength": 0.15
+  },
+  "recommendation": {
+    "actions": [
+      {
+        "emit": "NO_OP",
+        "parameters": {}
+      }
+    ],
+    "candidates_considered": [
+      "high_iv_sell_call",
+      "roll_up_and_out_when_short_call_threatened",
+      "wheel_on_low_iv_range",
+      "hold_no_op"
+    ],
+    "confidence": 0.2303,
+    "confidence_breakdown": {
+      "event_risk_penalty": 0.0,
+      "flow_alignment": 0.076,
+      "illiquidity_penalty": 0.0,
+      "penalty_multiplier": 1.0,
+      "positive_score": 0.2303,
+      "regime_match": 0.45,
+      "signal_alignment": 0.3,
+      "structure_alignment": 0.14,
+      "weights_version": "v2.0"
+    },
+    "coverage_after": 0.0,
+    "invalidation": [
+      "Confidence rises above 0.50 on next compute"
+    ],
+    "matched_rule": {
+      "emit": "NO_OP",
+      "invalidation": [
+        "Confidence rises above 0.50 on next compute"
+      ],
+      "rationale": "Signal alignment too low ({{confidence}}); no high-conviction action",
+      "risks": [],
+      "rule_id": "hold_no_op",
+      "score": 1.0
+    },
+    "rationale": [
+      "Signal alignment too low (23%); no high-conviction action"
+    ],
+    "regime": "LOW_IV_RANGE",
+    "risks": [],
+    "warnings": [
+      "Low confidence (0.15) \u2014 focus expiry has minimal OI",
+      "Borderline FlowScore (+0.2) \u2014 consider waiting for clearer signal"
+    ]
+  },
+  "spot": 405.0,
+  "strike_selections": [
+    {
+      "emit": "NO_OP",
+      "legs": [],
+      "skipped_reason": "NO_OP requires no concrete strike selection (close-existing or NO_OP)"
+    }
+  ],
+  "ticker": "MSFT",
+  "user_profile_snapshot": {
+    "drawdown_tolerance": 0.3,
+    "income_need": "medium",
+    "max_coverage_pct": 0.5,
+    "max_position_pct": 1.0,
+    "min_iv_rank_for_short_premium": 50,
+    "prefer_collars_over_covered_calls": false,
+    "risk_tolerance": "moderate",
+    "style": "balanced"
+  },
+  "weights_version": "v2.0"
+}

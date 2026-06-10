@@ -1,0 +1,306 @@
+{
+  "as_of": "2026-05-20T14:30:00Z",
+  "collar_structures": [
+    null
+  ],
+  "confidence": 0.40533,
+  "confidence_breakdown": {
+    "event_risk_penalty": 0.0,
+    "flow_alignment": 0.2515,
+    "illiquidity_penalty": 0.116133,
+    "penalty_multiplier": 0.970967,
+    "positive_score": 0.41745,
+    "regime_match": 0.72,
+    "signal_alignment": 0.61,
+    "structure_alignment": 0.16,
+    "weights_version": "v2.0"
+  },
+  "data_freshness": [],
+  "decision_id": "dd_be59cc7b8322_1779287400",
+  "disclaimers": [
+    "Educational only",
+    "Not financial advice",
+    "Verify with broker"
+  ],
+  "downgrades": [
+    {
+      "downgrade_notes": [],
+      "escalated": false,
+      "final_execution": {
+        "aggregate_fill_confidence": 0.883867,
+        "aggregate_liquidity_score": 0.955333,
+        "legs": [
+          {
+            "expected_slippage": 0.005002,
+            "fill_confidence": 0.883867,
+            "leg_id": "short_put_390.0_2026-06-19",
+            "limit_price_band": [
+              1.49,
+              1.51
+            ],
+            "liquidity_score": 0.955333,
+            "size_warnings": [],
+            "spread_bps": 67,
+            "suggested_order_type": "limit"
+          }
+        ],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "final_selection": {
+        "emit": "WHEEL_SHORT_PUT",
+        "legs": [
+          {
+            "contract": {
+              "ask": 1.505,
+              "bid": 1.495,
+              "expiry": "2026-06-19",
+              "iv": 0.2,
+              "mid": 1.5,
+              "open_interest": 5000,
+              "option_type": "PUT",
+              "strike": 390.0,
+              "underlying": "MSFT",
+              "volume": 1000
+            },
+            "delta_actual": -0.293946,
+            "delta_distance": 0.006054,
+            "delta_target": -0.3,
+            "dte_actual": 30,
+            "mid_price": 1.5,
+            "side": "SHORT"
+          }
+        ],
+        "skipped_reason": null
+      },
+      "iterations": 0,
+      "original_execution": {
+        "aggregate_fill_confidence": 0.883867,
+        "aggregate_liquidity_score": 0.955333,
+        "legs": [
+          {
+            "expected_slippage": 0.005002,
+            "fill_confidence": 0.883867,
+            "leg_id": "short_put_390.0_2026-06-19",
+            "limit_price_band": [
+              1.49,
+              1.51
+            ],
+            "liquidity_score": 0.955333,
+            "size_warnings": [],
+            "spread_bps": 67,
+            "suggested_order_type": "limit"
+          }
+        ],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "original_selection": {
+        "emit": "WHEEL_SHORT_PUT",
+        "legs": [
+          {
+            "contract": {
+              "ask": 1.505,
+              "bid": 1.495,
+              "expiry": "2026-06-19",
+              "iv": 0.2,
+              "mid": 1.5,
+              "open_interest": 5000,
+              "option_type": "PUT",
+              "strike": 390.0,
+              "underlying": "MSFT",
+              "volume": 1000
+            },
+            "delta_actual": -0.293946,
+            "delta_distance": 0.006054,
+            "delta_target": -0.3,
+            "dte_actual": 30,
+            "mid_price": 1.5,
+            "side": "SHORT"
+          }
+        ],
+        "skipped_reason": null
+      }
+    }
+  ],
+  "engine_version": "1.7.0",
+  "escalated": false,
+  "executions": [
+    {
+      "aggregate_fill_confidence": 0.883867,
+      "aggregate_liquidity_score": 0.955333,
+      "legs": [
+        {
+          "expected_slippage": 0.005002,
+          "fill_confidence": 0.883867,
+          "leg_id": "short_put_390.0_2026-06-19",
+          "limit_price_band": [
+            1.49,
+            1.51
+          ],
+          "liquidity_score": 0.955333,
+          "size_warnings": [],
+          "spread_bps": 67,
+          "suggested_order_type": "limit"
+        }
+      ],
+      "notes": [],
+      "suggested_order_type": "limit"
+    }
+  ],
+  "flow_score": {
+    "bearish_score": 0.25,
+    "bias": "NEUTRAL",
+    "breakdown": {
+      "event": 0.0,
+      "gamma": 0.2,
+      "iv": 0.3,
+      "structure": 0.4
+    },
+    "bullish_score": 0.3,
+    "confidence": 0.5,
+    "explanation": "m1.24 fixture 06 \u2014 range-bound, low IV, income profile, wheel candidate",
+    "gamma_risk": 0.15,
+    "gamma_sign": 0,
+    "pin_probability": 0.35,
+    "recommended_action": "WAIT",
+    "score": 0.3
+  },
+  "inputs_hash": "sha256:be59cc7b83227f0cde8b93a01fea40e8f3007dcdcdfa3f7797c8266f1d2d3214",
+  "market_state": {
+    "all_scores": {
+      "BREAKOUT": 0.0,
+      "HIGH_IV_EVENT": 0.0,
+      "HIGH_IV_PIN": 0.0,
+      "LOW_IV_RANGE": 0.72,
+      "LOW_IV_TREND": 0.0,
+      "POST_EVENT_REPRICE": 0.0
+    },
+    "breakout_signal": 0.05,
+    "days_since_event": null,
+    "days_to_nearest_opex": 18,
+    "days_to_next_event": 40,
+    "expected_move_pct": 0.022,
+    "gap_pct": 0.0,
+    "hv_30": 0.16,
+    "iv_percentile": 0.32,
+    "iv_rank": 0.3,
+    "iv_rank_change_1d": -0.005,
+    "max_pain": 400.0,
+    "max_pain_delta_pct": 0.0,
+    "next_event_kind": "earnings",
+    "oi_concentration_at_max_pain": 0.35,
+    "pcr_oi": 1.0,
+    "pcr_volume": 1.05,
+    "realized_vs_implied": 1.0,
+    "regime": "LOW_IV_RANGE",
+    "regime_score": 0.72,
+    "spot": 400.0,
+    "tags": [
+      "m1_24_fixture_06",
+      "ranging"
+    ],
+    "trend_strength": 0.15
+  },
+  "recommendation": {
+    "actions": [
+      {
+        "emit": "WHEEL_SHORT_PUT",
+        "parameters": {
+          "size_pct": 0.5,
+          "target_delta": 0.3,
+          "target_dte": 30.0,
+          "urgency_days": 5.0
+        }
+      }
+    ],
+    "candidates_considered": [
+      "high_iv_sell_call",
+      "roll_up_and_out_when_short_call_threatened",
+      "wheel_on_low_iv_range"
+    ],
+    "confidence": 0.41745,
+    "confidence_breakdown": {
+      "event_risk_penalty": 0.0,
+      "flow_alignment": 0.2515,
+      "illiquidity_penalty": 0.0,
+      "penalty_multiplier": 1.0,
+      "positive_score": 0.41745,
+      "regime_match": 0.72,
+      "signal_alignment": 0.61,
+      "structure_alignment": 0.16,
+      "weights_version": "v2.0"
+    },
+    "coverage_after": 0.0,
+    "invalidation": [
+      "Regime shifts to LOW_IV_TREND",
+      "Spot falls below support"
+    ],
+    "matched_rule": {
+      "emit": "WHEEL_SHORT_PUT",
+      "invalidation": [
+        "Regime shifts to LOW_IV_TREND",
+        "Spot falls below support"
+      ],
+      "rationale": "Range market + income profile; sell puts at support",
+      "risks": [
+        "Assignment at higher cost basis if range breaks down",
+        "Naked-put margin"
+      ],
+      "rule_id": "wheel_on_low_iv_range",
+      "score": 1.0
+    },
+    "rationale": [
+      "Range market + income profile; sell puts at support"
+    ],
+    "regime": "LOW_IV_RANGE",
+    "risks": [
+      "Assignment at higher cost basis if range breaks down",
+      "Naked-put margin"
+    ],
+    "warnings": [
+      "Borderline FlowScore (+0.3) \u2014 consider waiting for clearer signal"
+    ]
+  },
+  "spot": 400.0,
+  "strike_selections": [
+    {
+      "emit": "WHEEL_SHORT_PUT",
+      "legs": [
+        {
+          "contract": {
+            "ask": 1.505,
+            "bid": 1.495,
+            "expiry": "2026-06-19",
+            "iv": 0.2,
+            "mid": 1.5,
+            "open_interest": 5000,
+            "option_type": "PUT",
+            "strike": 390.0,
+            "underlying": "MSFT",
+            "volume": 1000
+          },
+          "delta_actual": -0.293946,
+          "delta_distance": 0.006054,
+          "delta_target": -0.3,
+          "dte_actual": 30,
+          "mid_price": 1.5,
+          "side": "SHORT"
+        }
+      ],
+      "skipped_reason": null
+    }
+  ],
+  "ticker": "MSFT",
+  "user_profile_snapshot": {
+    "drawdown_tolerance": 0.1,
+    "income_need": "high",
+    "max_coverage_pct": 0.8,
+    "max_position_pct": 1.0,
+    "min_iv_rank_for_short_premium": 30,
+    "prefer_collars_over_covered_calls": false,
+    "risk_tolerance": "moderate",
+    "style": "income"
+  },
+  "weights_version": "v2.0"
+}

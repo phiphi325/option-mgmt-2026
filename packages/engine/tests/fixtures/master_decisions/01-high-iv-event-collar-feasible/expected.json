@@ -1,0 +1,503 @@
+{
+  "as_of": "2026-05-20T14:30:00Z",
+  "collar_structures": [
+    {
+      "capped_upside_pct": 0.05,
+      "confidence": 0.643695,
+      "confidence_breakdown": {
+        "event_risk_penalty": 0.2,
+        "flow_alignment": 0.8,
+        "illiquidity_penalty": 0.173333,
+        "penalty_multiplier": 0.899267,
+        "positive_score": 0.7158,
+        "regime_match": 0.9,
+        "signal_alignment": 0.004,
+        "structure_alignment": 1.0,
+        "weights_version": "v2.0"
+      },
+      "downside_breakeven": 400.0,
+      "execution": {
+        "aggregate_fill_confidence": 0.826667,
+        "aggregate_liquidity_score": 0.933333,
+        "legs": [
+          {
+            "expected_slippage": 0.005004,
+            "fill_confidence": 0.826667,
+            "leg_id": "long_put_380.0_2026-06-19",
+            "limit_price_band": [
+              0.99,
+              1.01
+            ],
+            "liquidity_score": 0.933333,
+            "size_warnings": [],
+            "spread_bps": 100,
+            "suggested_order_type": "limit"
+          },
+          {
+            "expected_slippage": 0.005004,
+            "fill_confidence": 0.826667,
+            "leg_id": "short_call_420.0_2026-06-19",
+            "limit_price_band": [
+              0.99,
+              1.01
+            ],
+            "liquidity_score": 0.933333,
+            "size_warnings": [],
+            "spread_bps": 100,
+            "suggested_order_type": "limit"
+          }
+        ],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "horizon_days": 30,
+      "intent": "zero_cost",
+      "invalidation": [
+        "Spot moves below long put strike before expiry \u2192 re-evaluate roll.",
+        "Implied vol collapses post-event \u2192 consider closing short call early.",
+        "Position size changes (e.g., partial sale) \u2192 resize the collar."
+      ],
+      "long_put": {
+        "ask": 1.005,
+        "bid": 0.995,
+        "delta": -0.245988,
+        "expiry": "2026-06-19",
+        "iv": 0.3,
+        "kind": "PUT",
+        "mid": 1.0,
+        "premium": 1.0,
+        "qty": 2,
+        "side": "BUY",
+        "strike": 380.0
+      },
+      "max_gain": 20.0,
+      "max_loss": -20.0,
+      "name": "Zero-cost 30d collar 380/420",
+      "net_debit_credit": 0.0,
+      "protected_downside_pct": 0.05,
+      "rationale": [
+        "Protects 5.0% downside via long 380.00 put.",
+        "Capped upside above 420.00 (5.0% from spot).",
+        "Near-zero net premium (+0.00/share) \u2014 short call funds the put."
+      ],
+      "risks": [
+        "Upside capped at 420.00 \u2014 gives up rally above 5.0%.",
+        "Long put can lose value rapidly if IV drops post-event.",
+        "Early assignment risk on the short call if it goes deep ITM."
+      ],
+      "score": -0.669333,
+      "short_call": {
+        "ask": 1.005,
+        "bid": 0.995,
+        "delta": 0.316861,
+        "expiry": "2026-06-19",
+        "iv": 0.3,
+        "kind": "CALL",
+        "mid": 1.0,
+        "premium": -1.0,
+        "qty": 2,
+        "side": "SELL",
+        "strike": 420.0
+      },
+      "upside_breakeven": 400.0
+    }
+  ],
+  "confidence": 0.303242,
+  "confidence_breakdown": {
+    "event_risk_penalty": 1.0,
+    "flow_alignment": 0.30275,
+    "illiquidity_penalty": 0.173333,
+    "penalty_multiplier": 0.669667,
+    "positive_score": 0.452825,
+    "regime_match": 0.82,
+    "signal_alignment": 0.71,
+    "structure_alignment": 0.06,
+    "weights_version": "v2.0"
+  },
+  "data_freshness": [],
+  "decision_id": "dd_bfb1a8148331_1779287400",
+  "disclaimers": [
+    "Educational only",
+    "Not financial advice",
+    "Verify with broker"
+  ],
+  "downgrades": [
+    {
+      "downgrade_notes": [],
+      "escalated": false,
+      "final_execution": {
+        "aggregate_fill_confidence": 0.826667,
+        "aggregate_liquidity_score": 0.933333,
+        "legs": [
+          {
+            "expected_slippage": 0.005004,
+            "fill_confidence": 0.826667,
+            "leg_id": "long_put_380.0_2026-06-19",
+            "limit_price_band": [
+              0.99,
+              1.01
+            ],
+            "liquidity_score": 0.933333,
+            "size_warnings": [],
+            "spread_bps": 100,
+            "suggested_order_type": "limit"
+          },
+          {
+            "expected_slippage": 0.005004,
+            "fill_confidence": 0.826667,
+            "leg_id": "short_call_420.0_2026-06-19",
+            "limit_price_band": [
+              0.99,
+              1.01
+            ],
+            "liquidity_score": 0.933333,
+            "size_warnings": [],
+            "spread_bps": 100,
+            "suggested_order_type": "limit"
+          }
+        ],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "final_selection": {
+        "emit": "OPEN_COLLAR",
+        "legs": [
+          {
+            "contract": {
+              "ask": 1.005,
+              "bid": 0.995,
+              "expiry": "2026-06-19",
+              "iv": 0.3,
+              "mid": 1.0,
+              "open_interest": 5000,
+              "option_type": "PUT",
+              "strike": 380.0,
+              "underlying": "MSFT",
+              "volume": 1000
+            },
+            "delta_actual": -0.245988,
+            "delta_distance": 0.0,
+            "delta_target": -0.245988,
+            "dte_actual": 30,
+            "mid_price": 1.0,
+            "side": "LONG"
+          },
+          {
+            "contract": {
+              "ask": 1.005,
+              "bid": 0.995,
+              "expiry": "2026-06-19",
+              "iv": 0.3,
+              "mid": 1.0,
+              "open_interest": 5000,
+              "option_type": "CALL",
+              "strike": 420.0,
+              "underlying": "MSFT",
+              "volume": 1000
+            },
+            "delta_actual": 0.316861,
+            "delta_distance": 0.0,
+            "delta_target": 0.316861,
+            "dte_actual": 30,
+            "mid_price": 1.0,
+            "side": "SHORT"
+          }
+        ],
+        "skipped_reason": null
+      },
+      "iterations": 0,
+      "original_execution": {
+        "aggregate_fill_confidence": 0.826667,
+        "aggregate_liquidity_score": 0.933333,
+        "legs": [
+          {
+            "expected_slippage": 0.005004,
+            "fill_confidence": 0.826667,
+            "leg_id": "long_put_380.0_2026-06-19",
+            "limit_price_band": [
+              0.99,
+              1.01
+            ],
+            "liquidity_score": 0.933333,
+            "size_warnings": [],
+            "spread_bps": 100,
+            "suggested_order_type": "limit"
+          },
+          {
+            "expected_slippage": 0.005004,
+            "fill_confidence": 0.826667,
+            "leg_id": "short_call_420.0_2026-06-19",
+            "limit_price_band": [
+              0.99,
+              1.01
+            ],
+            "liquidity_score": 0.933333,
+            "size_warnings": [],
+            "spread_bps": 100,
+            "suggested_order_type": "limit"
+          }
+        ],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "original_selection": {
+        "emit": "OPEN_COLLAR",
+        "legs": [
+          {
+            "contract": {
+              "ask": 1.005,
+              "bid": 0.995,
+              "expiry": "2026-06-19",
+              "iv": 0.3,
+              "mid": 1.0,
+              "open_interest": 5000,
+              "option_type": "PUT",
+              "strike": 380.0,
+              "underlying": "MSFT",
+              "volume": 1000
+            },
+            "delta_actual": -0.245988,
+            "delta_distance": 0.0,
+            "delta_target": -0.245988,
+            "dte_actual": 30,
+            "mid_price": 1.0,
+            "side": "LONG"
+          },
+          {
+            "contract": {
+              "ask": 1.005,
+              "bid": 0.995,
+              "expiry": "2026-06-19",
+              "iv": 0.3,
+              "mid": 1.0,
+              "open_interest": 5000,
+              "option_type": "CALL",
+              "strike": 420.0,
+              "underlying": "MSFT",
+              "volume": 1000
+            },
+            "delta_actual": 0.316861,
+            "delta_distance": 0.0,
+            "delta_target": 0.316861,
+            "dte_actual": 30,
+            "mid_price": 1.0,
+            "side": "SHORT"
+          }
+        ],
+        "skipped_reason": null
+      }
+    }
+  ],
+  "engine_version": "1.7.0",
+  "escalated": false,
+  "executions": [
+    {
+      "aggregate_fill_confidence": 0.826667,
+      "aggregate_liquidity_score": 0.933333,
+      "legs": [
+        {
+          "expected_slippage": 0.005004,
+          "fill_confidence": 0.826667,
+          "leg_id": "long_put_380.0_2026-06-19",
+          "limit_price_band": [
+            0.99,
+            1.01
+          ],
+          "liquidity_score": 0.933333,
+          "size_warnings": [],
+          "spread_bps": 100,
+          "suggested_order_type": "limit"
+        },
+        {
+          "expected_slippage": 0.005004,
+          "fill_confidence": 0.826667,
+          "leg_id": "short_call_420.0_2026-06-19",
+          "limit_price_band": [
+            0.99,
+            1.01
+          ],
+          "liquidity_score": 0.933333,
+          "size_warnings": [],
+          "spread_bps": 100,
+          "suggested_order_type": "limit"
+        }
+      ],
+      "notes": [],
+      "suggested_order_type": "limit"
+    }
+  ],
+  "flow_score": {
+    "bearish_score": 0.75,
+    "bias": "BEARISH",
+    "breakdown": {
+      "event": 0.2,
+      "gamma": 0.3,
+      "iv": 0.5,
+      "structure": 0.4
+    },
+    "bullish_score": 0.3,
+    "confidence": 0.6,
+    "explanation": "m1.24 fixture 01 \u2014 pre-event high-IV setup",
+    "gamma_risk": 0.3,
+    "gamma_sign": -1,
+    "pin_probability": 0.2,
+    "recommended_action": "BUY_PROTECTION",
+    "score": 0.55
+  },
+  "inputs_hash": "sha256:bfb1a8148331ac4563eba180dcec8fab1643952acda81d990c8918517638f4bd",
+  "market_state": {
+    "all_scores": {
+      "BREAKOUT": 0.0,
+      "HIGH_IV_EVENT": 0.82,
+      "HIGH_IV_PIN": 0.0,
+      "LOW_IV_RANGE": 0.0,
+      "LOW_IV_TREND": 0.0,
+      "POST_EVENT_REPRICE": 0.0
+    },
+    "breakout_signal": 0.0,
+    "days_since_event": null,
+    "days_to_nearest_opex": 14,
+    "days_to_next_event": 3,
+    "expected_move_pct": 0.045,
+    "gap_pct": 0.0,
+    "hv_30": 0.25,
+    "iv_percentile": 0.4,
+    "iv_rank": 0.4,
+    "iv_rank_change_1d": 0.02,
+    "max_pain": 400.0,
+    "max_pain_delta_pct": 0.0,
+    "next_event_kind": "earnings",
+    "oi_concentration_at_max_pain": 0.3,
+    "pcr_oi": 1.0,
+    "pcr_volume": 1.1,
+    "realized_vs_implied": 0.95,
+    "regime": "HIGH_IV_EVENT",
+    "regime_score": 0.82,
+    "spot": 400.0,
+    "tags": [
+      "m1_24_fixture_01"
+    ],
+    "trend_strength": 0.0
+  },
+  "recommendation": {
+    "actions": [
+      {
+        "emit": "OPEN_COLLAR",
+        "parameters": {
+          "size_pct": 0.75,
+          "target_delta": 0.25,
+          "target_dte": 45.0,
+          "urgency_days": 1.0
+        }
+      }
+    ],
+    "candidates_considered": [
+      "high_iv_sell_call",
+      "open_collar_pre_event"
+    ],
+    "confidence": 0.316977,
+    "confidence_breakdown": {
+      "event_risk_penalty": 1.0,
+      "flow_alignment": 0.30275,
+      "illiquidity_penalty": 0.0,
+      "penalty_multiplier": 0.7,
+      "positive_score": 0.452825,
+      "regime_match": 0.82,
+      "signal_alignment": 0.71,
+      "structure_alignment": 0.06,
+      "weights_version": "v2.0"
+    },
+    "coverage_after": 0.75,
+    "invalidation": [
+      "Event passes without expected move",
+      "IVR drops < 50"
+    ],
+    "matched_rule": {
+      "emit": "OPEN_COLLAR",
+      "invalidation": [
+        "Event passes without expected move",
+        "IVR drops < 50"
+      ],
+      "rationale": "{{days_to_next_event}}d to {{event_kind}}; collar protects gap risk",
+      "risks": [
+        "Collar caps both sides",
+        "Net debit if put cost > call premium"
+      ],
+      "rule_id": "open_collar_pre_event",
+      "score": 1.0
+    },
+    "rationale": [
+      "3d to earnings; collar protects gap risk"
+    ],
+    "regime": "HIGH_IV_EVENT",
+    "risks": [
+      "Collar caps both sides",
+      "Net debit if put cost > call premium"
+    ],
+    "warnings": [
+      "Event window \u2014 earnings in 3 days; gamma/vega risk elevated",
+      "Borderline FlowScore (+0.6) \u2014 consider waiting for clearer signal"
+    ]
+  },
+  "spot": 400.0,
+  "strike_selections": [
+    {
+      "emit": "OPEN_COLLAR",
+      "legs": [
+        {
+          "contract": {
+            "ask": 1.005,
+            "bid": 0.995,
+            "expiry": "2026-06-19",
+            "iv": 0.3,
+            "mid": 1.0,
+            "open_interest": 5000,
+            "option_type": "PUT",
+            "strike": 380.0,
+            "underlying": "MSFT",
+            "volume": 1000
+          },
+          "delta_actual": -0.245988,
+          "delta_distance": 0.0,
+          "delta_target": -0.245988,
+          "dte_actual": 30,
+          "mid_price": 1.0,
+          "side": "LONG"
+        },
+        {
+          "contract": {
+            "ask": 1.005,
+            "bid": 0.995,
+            "expiry": "2026-06-19",
+            "iv": 0.3,
+            "mid": 1.0,
+            "open_interest": 5000,
+            "option_type": "CALL",
+            "strike": 420.0,
+            "underlying": "MSFT",
+            "volume": 1000
+          },
+          "delta_actual": 0.316861,
+          "delta_distance": 0.0,
+          "delta_target": 0.316861,
+          "dte_actual": 30,
+          "mid_price": 1.0,
+          "side": "SHORT"
+        }
+      ],
+      "skipped_reason": null
+    }
+  ],
+  "ticker": "MSFT",
+  "user_profile_snapshot": {
+    "drawdown_tolerance": 0.05,
+    "income_need": "medium",
+    "max_coverage_pct": 1.0,
+    "max_position_pct": 1.0,
+    "min_iv_rank_for_short_premium": 40,
+    "prefer_collars_over_covered_calls": true,
+    "risk_tolerance": "moderate",
+    "style": "balanced"
+  },
+  "weights_version": "v2.0"
+}

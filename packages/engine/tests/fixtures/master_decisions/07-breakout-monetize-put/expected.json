@@ -1,0 +1,197 @@
+{
+  "as_of": "2026-05-20T14:30:00Z",
+  "collar_structures": [
+    null
+  ],
+  "confidence": 0.593489,
+  "confidence_breakdown": {
+    "event_risk_penalty": 0.166667,
+    "flow_alignment": 0.35325,
+    "illiquidity_penalty": 0.0,
+    "penalty_multiplier": 0.95,
+    "positive_score": 0.624725,
+    "regime_match": 0.85,
+    "signal_alignment": 0.775,
+    "structure_alignment": 0.605,
+    "weights_version": "v2.0"
+  },
+  "data_freshness": [],
+  "decision_id": "dd_58d14b30b53b_1779287400",
+  "disclaimers": [
+    "Educational only",
+    "Not financial advice",
+    "Verify with broker"
+  ],
+  "downgrades": [
+    {
+      "downgrade_notes": [],
+      "escalated": false,
+      "final_execution": {
+        "aggregate_fill_confidence": 1.0,
+        "aggregate_liquidity_score": 1.0,
+        "legs": [],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "final_selection": {
+        "emit": "MONETIZE_PUT",
+        "legs": [],
+        "skipped_reason": "MONETIZE_PUT requires no concrete strike selection (close-existing or NO_OP)"
+      },
+      "iterations": 0,
+      "original_execution": {
+        "aggregate_fill_confidence": 1.0,
+        "aggregate_liquidity_score": 1.0,
+        "legs": [],
+        "notes": [],
+        "suggested_order_type": "limit"
+      },
+      "original_selection": {
+        "emit": "MONETIZE_PUT",
+        "legs": [],
+        "skipped_reason": "MONETIZE_PUT requires no concrete strike selection (close-existing or NO_OP)"
+      }
+    }
+  ],
+  "engine_version": "1.7.0",
+  "escalated": false,
+  "executions": [
+    {
+      "aggregate_fill_confidence": 1.0,
+      "aggregate_liquidity_score": 1.0,
+      "legs": [],
+      "notes": [],
+      "suggested_order_type": "limit"
+    }
+  ],
+  "flow_score": {
+    "bearish_score": 0.2,
+    "bias": "BULLISH",
+    "breakdown": {
+      "event": 0.1,
+      "gamma": 0.3,
+      "iv": 0.5,
+      "structure": 0.4
+    },
+    "bullish_score": 0.7,
+    "confidence": 0.7,
+    "explanation": "m1.24 fixture 07 \u2014 breakout rally; existing long put is up 35%; harvest gains",
+    "gamma_risk": 0.2,
+    "gamma_sign": 1,
+    "pin_probability": 0.1,
+    "recommended_action": "REDUCE_COVERAGE",
+    "score": 0.65
+  },
+  "inputs_hash": "sha256:58d14b30b53b93882bdecdae46d6f8906fc29d593545929164b6824a3af91e41",
+  "market_state": {
+    "all_scores": {
+      "BREAKOUT": 0.85,
+      "HIGH_IV_EVENT": 0.0,
+      "HIGH_IV_PIN": 0.0,
+      "LOW_IV_RANGE": 0.0,
+      "LOW_IV_TREND": 0.0,
+      "POST_EVENT_REPRICE": 0.0
+    },
+    "breakout_signal": 0.8,
+    "days_since_event": 12,
+    "days_to_nearest_opex": 20,
+    "days_to_next_event": 25,
+    "expected_move_pct": 0.04,
+    "gap_pct": 0.0,
+    "hv_30": 0.3,
+    "iv_percentile": 0.48,
+    "iv_rank": 0.45,
+    "iv_rank_change_1d": -0.03,
+    "max_pain": 405.0,
+    "max_pain_delta_pct": -0.0471,
+    "next_event_kind": "earnings",
+    "oi_concentration_at_max_pain": 0.2,
+    "pcr_oi": 0.75,
+    "pcr_volume": 0.7,
+    "realized_vs_implied": 1.15,
+    "regime": "BREAKOUT",
+    "regime_score": 0.85,
+    "spot": 425.0,
+    "tags": [
+      "m1_24_fixture_07",
+      "breakout_active"
+    ],
+    "trend_strength": 0.65
+  },
+  "recommendation": {
+    "actions": [
+      {
+        "emit": "MONETIZE_PUT",
+        "parameters": {
+          "size_pct": 1.0,
+          "target_delta": 0.0,
+          "target_dte": 0.0,
+          "urgency_days": 1.0
+        }
+      }
+    ],
+    "candidates_considered": [
+      "roll_up_and_out_when_short_call_threatened",
+      "reduce_coverage_on_breakout_post_event",
+      "monetize_put_on_breakout"
+    ],
+    "confidence": 0.593489,
+    "confidence_breakdown": {
+      "event_risk_penalty": 0.166667,
+      "flow_alignment": 0.35325,
+      "illiquidity_penalty": 0.0,
+      "penalty_multiplier": 0.95,
+      "positive_score": 0.624725,
+      "regime_match": 0.85,
+      "signal_alignment": 0.775,
+      "structure_alignment": 0.605,
+      "weights_version": "v2.0"
+    },
+    "coverage_after": 0.0,
+    "invalidation": [
+      "Trend fails immediately"
+    ],
+    "matched_rule": {
+      "emit": "MONETIZE_PUT",
+      "invalidation": [
+        "Trend fails immediately"
+      ],
+      "rationale": "Long put up {{put_pnl_pct}}; harvest gains, re-strike later if needed",
+      "risks": [
+        "Trend reverses and we'd be unhedged"
+      ],
+      "rule_id": "monetize_put_on_breakout",
+      "score": 1.0
+    },
+    "rationale": [
+      "Long put up 35%; harvest gains, re-strike later if needed"
+    ],
+    "regime": "BREAKOUT",
+    "risks": [
+      "Trend reverses and we'd be unhedged"
+    ],
+    "warnings": [
+      "Borderline FlowScore (+0.7) \u2014 consider waiting for clearer signal"
+    ]
+  },
+  "spot": 425.0,
+  "strike_selections": [
+    {
+      "emit": "MONETIZE_PUT",
+      "legs": [],
+      "skipped_reason": "MONETIZE_PUT requires no concrete strike selection (close-existing or NO_OP)"
+    }
+  ],
+  "ticker": "MSFT",
+  "user_profile_snapshot": {
+    "drawdown_tolerance": 0.15,
+    "income_need": "medium",
+    "max_coverage_pct": 0.5,
+    "max_position_pct": 1.0,
+    "min_iv_rank_for_short_premium": 50,
+    "prefer_collars_over_covered_calls": false,
+    "risk_tolerance": "moderate",
+    "style": "balanced"
+  },
+  "weights_version": "v2.0"
+}

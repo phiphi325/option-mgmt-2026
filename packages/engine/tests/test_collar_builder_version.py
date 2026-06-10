@@ -11,9 +11,12 @@ from engine.collar_builder import (
 )
 
 
-def test_engine_version_bumped_to_1_6_0() -> None:
-    """M1.11b is the version 1.6.0 bump per dev spec (M1.11a was the 1.5.0 bump)."""
-    assert engine.__version__ == "1.6.0"
+def test_engine_version_is_1_7_0() -> None:
+    """M1.24 bumped engine 1.6.0 → 1.7.0 per Open Question Q1 of the M1.24 dev
+    spec (new public function `engine.decision.serialize_canonical` qualifies
+    for a minor bump under strict ADR-0005 reading). Historical bumps preserved
+    in CHANGELOG.md."""
+    assert engine.__version__ == "1.7.0"
 
 
 def test_collar_builder_types_exported_via_engine_namespace() -> None:

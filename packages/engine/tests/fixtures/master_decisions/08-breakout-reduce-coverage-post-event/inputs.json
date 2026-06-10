@@ -1,0 +1,185 @@
+{
+  "as_of": "2026-05-20T14:30:00Z",
+  "ticker": "MSFT",
+  "chain_snapshot": {
+    "underlying": "MSFT",
+    "spot": 415.0,
+    "as_of": "2026-05-20",
+    "contracts": [
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 380.0,
+        "option_type": "PUT",
+        "bid": 0.395,
+        "ask": 0.405,
+        "mid": 0.4,
+        "iv": 0.18,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 390.0,
+        "option_type": "PUT",
+        "bid": 0.695,
+        "ask": 0.705,
+        "mid": 0.7,
+        "iv": 0.18,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 400.0,
+        "option_type": "PUT",
+        "bid": 1.195,
+        "ask": 1.205,
+        "mid": 1.2,
+        "iv": 0.18,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 410.0,
+        "option_type": "PUT",
+        "bid": 2.295,
+        "ask": 2.305,
+        "mid": 2.3,
+        "iv": 0.18,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 420.0,
+        "option_type": "CALL",
+        "bid": 1.795,
+        "ask": 1.805,
+        "mid": 1.8,
+        "iv": 0.18,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 425.0,
+        "option_type": "CALL",
+        "bid": 1.095,
+        "ask": 1.105,
+        "mid": 1.1,
+        "iv": 0.18,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 430.0,
+        "option_type": "CALL",
+        "bid": 0.595,
+        "ask": 0.605,
+        "mid": 0.6,
+        "iv": 0.18,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 440.0,
+        "option_type": "CALL",
+        "bid": 0.195,
+        "ask": 0.205,
+        "mid": 0.2,
+        "iv": 0.18,
+        "open_interest": 5000,
+        "volume": 1000
+      }
+    ]
+  },
+  "positions": {
+    "underlying_shares": 400,
+    "has_short_call": true,
+    "nearest_short_call_strike": 425.0,
+    "nearest_short_call_dte": 30,
+    "short_call_contracts": 2,
+    "has_long_put": false,
+    "long_put_pnl_pct": 0.0,
+    "has_short_put": false
+  },
+  "profile": {
+    "risk_tolerance": "moderate",
+    "income_need": "medium",
+    "max_position_pct": 1.0,
+    "max_coverage_pct": 0.6,
+    "min_iv_rank_for_short_premium": 50,
+    "prefer_collars_over_covered_calls": false,
+    "drawdown_tolerance": 0.15,
+    "style": "balanced"
+  },
+  "market_state": {
+    "regime": "BREAKOUT",
+    "regime_score": 0.78,
+    "all_scores": {
+      "HIGH_IV_EVENT": 0.0,
+      "HIGH_IV_PIN": 0.0,
+      "LOW_IV_TREND": 0.0,
+      "LOW_IV_RANGE": 0.0,
+      "BREAKOUT": 0.78,
+      "POST_EVENT_REPRICE": 0.0
+    },
+    "tags": [
+      "m1_24_fixture_08",
+      "breakout_active",
+      "post_event_window"
+    ],
+    "spot": 415.0,
+    "iv_rank": 0.3,
+    "iv_percentile": 0.35,
+    "hv_30": 0.2,
+    "expected_move_pct": 0.025,
+    "max_pain": 405.0,
+    "max_pain_delta_pct": -0.0241,
+    "pcr_volume": 0.75,
+    "pcr_oi": 0.8,
+    "trend_strength": 0.55,
+    "realized_vs_implied": 1.1,
+    "breakout_signal": 0.75,
+    "oi_concentration_at_max_pain": 0.25,
+    "days_to_next_event": 30,
+    "next_event_kind": "earnings",
+    "days_since_event": 1,
+    "days_to_nearest_opex": 18,
+    "iv_rank_change_1d": -0.2,
+    "gap_pct": 0.018
+  },
+  "flow_score": {
+    "score": 0.55,
+    "bullish_score": 0.6,
+    "bearish_score": 0.25,
+    "bias": "BULLISH",
+    "recommended_action": "REDUCE_COVERAGE",
+    "pin_probability": 0.15,
+    "gamma_risk": 0.18,
+    "gamma_sign": 1,
+    "confidence": 0.65,
+    "explanation": "m1.24 fixture 08 \u2014 post-event IV crush + breakout; unwind some short-call coverage",
+    "breakdown": {
+      "iv": 0.4,
+      "structure": 0.4,
+      "gamma": 0.2,
+      "event": 0.2
+    }
+  },
+  "rules": null,
+  "weights": null,
+  "risk_free_rate": 0.05,
+  "dividend_yield": 0.0
+}

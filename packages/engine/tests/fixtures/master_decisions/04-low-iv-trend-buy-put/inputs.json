@@ -1,0 +1,184 @@
+{
+  "as_of": "2026-05-20T14:30:00Z",
+  "ticker": "MSFT",
+  "chain_snapshot": {
+    "underlying": "MSFT",
+    "spot": 400.0,
+    "as_of": "2026-05-20",
+    "contracts": [
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-07-17",
+        "strike": 360.0,
+        "option_type": "PUT",
+        "bid": 1.495,
+        "ask": 1.505,
+        "mid": 1.5,
+        "iv": 0.22,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-07-17",
+        "strike": 370.0,
+        "option_type": "PUT",
+        "bid": 2.495,
+        "ask": 2.505,
+        "mid": 2.5,
+        "iv": 0.22,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-07-17",
+        "strike": 380.0,
+        "option_type": "PUT",
+        "bid": 3.995,
+        "ask": 4.005,
+        "mid": 4.0,
+        "iv": 0.22,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-07-17",
+        "strike": 390.0,
+        "option_type": "PUT",
+        "bid": 6.495,
+        "ask": 6.505,
+        "mid": 6.5,
+        "iv": 0.22,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-07-17",
+        "strike": 410.0,
+        "option_type": "CALL",
+        "bid": 4.995,
+        "ask": 5.005,
+        "mid": 5.0,
+        "iv": 0.22,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-07-17",
+        "strike": 420.0,
+        "option_type": "CALL",
+        "bid": 2.995,
+        "ask": 3.005,
+        "mid": 3.0,
+        "iv": 0.22,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-07-17",
+        "strike": 430.0,
+        "option_type": "CALL",
+        "bid": 1.495,
+        "ask": 1.505,
+        "mid": 1.5,
+        "iv": 0.22,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-07-17",
+        "strike": 440.0,
+        "option_type": "CALL",
+        "bid": 0.495,
+        "ask": 0.505,
+        "mid": 0.5,
+        "iv": 0.22,
+        "open_interest": 5000,
+        "volume": 1000
+      }
+    ]
+  },
+  "positions": {
+    "underlying_shares": 200,
+    "has_short_call": false,
+    "nearest_short_call_strike": null,
+    "nearest_short_call_dte": null,
+    "short_call_contracts": 0,
+    "has_long_put": false,
+    "long_put_pnl_pct": 0.0,
+    "has_short_put": false
+  },
+  "profile": {
+    "risk_tolerance": "conservative",
+    "income_need": "low",
+    "max_position_pct": 1.0,
+    "max_coverage_pct": 0.3,
+    "min_iv_rank_for_short_premium": 50,
+    "prefer_collars_over_covered_calls": true,
+    "drawdown_tolerance": 0.15,
+    "style": "balanced"
+  },
+  "market_state": {
+    "regime": "LOW_IV_TREND",
+    "regime_score": 0.75,
+    "all_scores": {
+      "HIGH_IV_EVENT": 0.0,
+      "HIGH_IV_PIN": 0.0,
+      "LOW_IV_TREND": 0.75,
+      "LOW_IV_RANGE": 0.0,
+      "BREAKOUT": 0.0,
+      "POST_EVENT_REPRICE": 0.0
+    },
+    "tags": [
+      "m1_24_fixture_04",
+      "trending"
+    ],
+    "spot": 400.0,
+    "iv_rank": 0.25,
+    "iv_percentile": 0.28,
+    "hv_30": 0.18,
+    "expected_move_pct": 0.025,
+    "max_pain": 395.0,
+    "max_pain_delta_pct": -0.0125,
+    "pcr_volume": 0.85,
+    "pcr_oi": 0.9,
+    "trend_strength": 0.75,
+    "realized_vs_implied": 0.85,
+    "breakout_signal": 0.2,
+    "oi_concentration_at_max_pain": 0.25,
+    "days_to_next_event": 60,
+    "next_event_kind": "earnings",
+    "days_since_event": null,
+    "days_to_nearest_opex": 22,
+    "iv_rank_change_1d": -0.01,
+    "gap_pct": 0.0
+  },
+  "flow_score": {
+    "score": 0.45,
+    "bullish_score": 0.45,
+    "bearish_score": 0.2,
+    "bias": "BULLISH",
+    "recommended_action": "MONITOR",
+    "pin_probability": 0.15,
+    "gamma_risk": 0.2,
+    "gamma_sign": 1,
+    "confidence": 0.55,
+    "explanation": "m1.24 fixture 04 \u2014 sustained uptrend, low IV, conservative profile wants tail hedge",
+    "breakdown": {
+      "iv": 0.3,
+      "structure": 0.3,
+      "gamma": 0.2,
+      "event": 0.0
+    }
+  },
+  "rules": null,
+  "weights": null,
+  "risk_free_rate": 0.05,
+  "dividend_yield": 0.0
+}

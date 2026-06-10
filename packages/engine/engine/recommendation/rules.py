@@ -262,9 +262,11 @@ def is_emit_in_regime_whitelist(emit: EmittedAction, regime: Any) -> bool:
       HIGH_IV_EVENT       → OPEN_COLLAR, SELL_COVERED_CALL_PARTIAL
       HIGH_IV_PIN         → SELL_COVERED_CALL_PARTIAL (subset)
       LOW_IV_TREND        → BUY_LONG_DATED_PUT, REDUCE_COVERAGE
-      LOW_IV_RANGE        → SELL_COVERED_CALL_PARTIAL, WHEEL_SHORT_PUT
+      LOW_IV_RANGE        → SELL_COVERED_CALL_PARTIAL, WHEEL_SHORT_PUT,
+                            ROLL_UP_AND_OUT (M1.24: short-call roll valid in any regime)
       BREAKOUT            → ROLL_UP_AND_OUT, REDUCE_COVERAGE, MONETIZE_PUT
-      POST_EVENT_REPRICE  → SELL_COVERED_CALL_PARTIAL (subset)
+      POST_EVENT_REPRICE  → SELL_COVERED_CALL_PARTIAL, OPEN_COLLAR
+                            (M1.24: collar reprice is a valid post-event action)
 
     NO_OP is always allowed (fallback).
     """
@@ -285,6 +287,7 @@ def is_emit_in_regime_whitelist(emit: EmittedAction, regime: Any) -> bool:
             {
                 EmittedAction.SELL_COVERED_CALL_PARTIAL,
                 EmittedAction.WHEEL_SHORT_PUT,
+                EmittedAction.ROLL_UP_AND_OUT,
             }
         ),
         "BREAKOUT": frozenset(
@@ -295,7 +298,7 @@ def is_emit_in_regime_whitelist(emit: EmittedAction, regime: Any) -> bool:
             }
         ),
         "POST_EVENT_REPRICE": frozenset(
-            {EmittedAction.SELL_COVERED_CALL_PARTIAL}
+            {EmittedAction.SELL_COVERED_CALL_PARTIAL, EmittedAction.OPEN_COLLAR}
         ),
     }
     return emit in whitelist.get(regime_name, frozenset())

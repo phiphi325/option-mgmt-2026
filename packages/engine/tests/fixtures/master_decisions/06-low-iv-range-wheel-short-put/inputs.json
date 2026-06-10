@@ -1,0 +1,184 @@
+{
+  "as_of": "2026-05-20T14:30:00Z",
+  "ticker": "MSFT",
+  "chain_snapshot": {
+    "underlying": "MSFT",
+    "spot": 400.0,
+    "as_of": "2026-05-20",
+    "contracts": [
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 370.0,
+        "option_type": "PUT",
+        "bid": 0.395,
+        "ask": 0.405,
+        "mid": 0.4,
+        "iv": 0.2,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 380.0,
+        "option_type": "PUT",
+        "bid": 0.795,
+        "ask": 0.805,
+        "mid": 0.8,
+        "iv": 0.2,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 390.0,
+        "option_type": "PUT",
+        "bid": 1.495,
+        "ask": 1.505,
+        "mid": 1.5,
+        "iv": 0.2,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 395.0,
+        "option_type": "PUT",
+        "bid": 2.495,
+        "ask": 2.505,
+        "mid": 2.5,
+        "iv": 0.2,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 405.0,
+        "option_type": "CALL",
+        "bid": 2.495,
+        "ask": 2.505,
+        "mid": 2.5,
+        "iv": 0.2,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 410.0,
+        "option_type": "CALL",
+        "bid": 1.495,
+        "ask": 1.505,
+        "mid": 1.5,
+        "iv": 0.2,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 420.0,
+        "option_type": "CALL",
+        "bid": 0.795,
+        "ask": 0.805,
+        "mid": 0.8,
+        "iv": 0.2,
+        "open_interest": 5000,
+        "volume": 1000
+      },
+      {
+        "underlying": "MSFT",
+        "expiry": "2026-06-19",
+        "strike": 430.0,
+        "option_type": "CALL",
+        "bid": 0.295,
+        "ask": 0.305,
+        "mid": 0.3,
+        "iv": 0.2,
+        "open_interest": 5000,
+        "volume": 1000
+      }
+    ]
+  },
+  "positions": {
+    "underlying_shares": 400,
+    "has_short_call": false,
+    "nearest_short_call_strike": null,
+    "nearest_short_call_dte": null,
+    "short_call_contracts": 0,
+    "has_long_put": false,
+    "long_put_pnl_pct": 0.0,
+    "has_short_put": false
+  },
+  "profile": {
+    "risk_tolerance": "moderate",
+    "income_need": "high",
+    "max_position_pct": 1.0,
+    "max_coverage_pct": 0.8,
+    "min_iv_rank_for_short_premium": 30,
+    "prefer_collars_over_covered_calls": false,
+    "drawdown_tolerance": 0.1,
+    "style": "income"
+  },
+  "market_state": {
+    "regime": "LOW_IV_RANGE",
+    "regime_score": 0.72,
+    "all_scores": {
+      "HIGH_IV_EVENT": 0.0,
+      "HIGH_IV_PIN": 0.0,
+      "LOW_IV_TREND": 0.0,
+      "LOW_IV_RANGE": 0.72,
+      "BREAKOUT": 0.0,
+      "POST_EVENT_REPRICE": 0.0
+    },
+    "tags": [
+      "m1_24_fixture_06",
+      "ranging"
+    ],
+    "spot": 400.0,
+    "iv_rank": 0.3,
+    "iv_percentile": 0.32,
+    "hv_30": 0.16,
+    "expected_move_pct": 0.022,
+    "max_pain": 400.0,
+    "max_pain_delta_pct": 0.0,
+    "pcr_volume": 1.05,
+    "pcr_oi": 1.0,
+    "trend_strength": 0.15,
+    "realized_vs_implied": 1.0,
+    "breakout_signal": 0.05,
+    "oi_concentration_at_max_pain": 0.35,
+    "days_to_next_event": 40,
+    "next_event_kind": "earnings",
+    "days_since_event": null,
+    "days_to_nearest_opex": 18,
+    "iv_rank_change_1d": -0.005,
+    "gap_pct": 0.0
+  },
+  "flow_score": {
+    "score": 0.3,
+    "bullish_score": 0.3,
+    "bearish_score": 0.25,
+    "bias": "NEUTRAL",
+    "recommended_action": "WAIT",
+    "pin_probability": 0.35,
+    "gamma_risk": 0.15,
+    "gamma_sign": 0,
+    "confidence": 0.5,
+    "explanation": "m1.24 fixture 06 \u2014 range-bound, low IV, income profile, wheel candidate",
+    "breakdown": {
+      "iv": 0.3,
+      "structure": 0.4,
+      "gamma": 0.2,
+      "event": 0.0
+    }
+  },
+  "rules": null,
+  "weights": null,
+  "risk_free_rate": 0.05,
+  "dividend_yield": 0.0
+}

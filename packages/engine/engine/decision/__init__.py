@@ -18,6 +18,8 @@ Public surface:
                             profile, market_state, flow_score) -> str
     canonical disclaimer set:
         DEFAULT_DISCLAIMERS: tuple[str, ...]
+    canonical serializer (M1.24 — test infrastructure):
+        serialize_canonical(decision) -> dict
 
 `produce_daily_decision()` is the single entry point for the M1.14
 `/engine/daily-plan` endpoint. The API layer hydrates inputs from
@@ -33,12 +35,18 @@ filter on the daily-plan endpoint).
 `DEFAULT_DISCLAIMERS` is the engine's contribution to the §15 disclaimer
 text. The API layer may concatenate broker-specific or jurisdictional
 addenda.
+
+`serialize_canonical` (M1.24, engine 1.7.0) produces a canonical-JSON-ready
+dict from a `DailyDecision`. **Test-infrastructure only** — used by the
+M1.24 golden replay harness + regeneration script. No production code
+path imports it.
 """
 
 from __future__ import annotations
 
 from engine.decision.hashing import compute_inputs_hash
 from engine.decision.produce import DEFAULT_DISCLAIMERS, produce_daily_decision
+from engine.decision.serialize import serialize_canonical
 from engine.decision.types import DailyDecision
 
 __all__ = [
@@ -46,4 +54,5 @@ __all__ = [
     "DailyDecision",
     "compute_inputs_hash",
     "produce_daily_decision",
+    "serialize_canonical",
 ]

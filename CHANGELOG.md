@@ -12,6 +12,67 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [1.7.0] — 2026-05-13
+
+### Added (engine — `engine.decision.serialize`, M1.24 golden-test infrastructure)
+
+- **`engine.decision.serialize.serialize_canonical(decision: DailyDecision) -> dict[str, Any]`** — canonical-JSON serializer for `DailyDecision`, used by the M1.24 golden replay harness + regeneration script. Produces a stable dict shape with: sorted keys (at `json.dumps` time), 6-decimal float rounding (absorbs Apple Silicon vs. Linux x86_64 ULP differences), `datetime` → ISO 8601 with naive treated as UTC, `Enum` → `.value`, tuples → lists, `frozenset` → sorted list (sorted by `repr`), Pydantic models via `model_dump(mode="json")`.
+- **`engine.decision.serialize_canonical`** re-export from `engine.decision`.
+
+### Used by (M1.24 infrastructure that does NOT live under `packages/engine/engine/`)
+
+- `packages/engine/tests/test_master_decision_goldens.py` — parametrized replay harness. One test case per fixture; fixtures live under `packages/engine/tests/fixtures/master_decisions/`. Each fixture is a directory with `inputs.json` + `expected.json`. The harness loads inputs, runs `produce_daily_decision()`, canonicalizes the output, and byte-compares against `expected.json`. Missing or placeholder `expected.json` produces an actionable "run regen" error.
+- `packages/engine/tests/test_master_decision_goldens_meta.py` — suite-level invariants: all 8 V1 emit codes appear, both M1.11b collar paths covered, M1.12 escalation covered, all 6 ADR-0002 regimes covered, `inputs_hash` stability across fixtures, engine/weights version stamps consistent. Soft-skips when fewer than 12 fixtures are populated (staged authoring).
+- `packages/engine/tests/test_serialize_canonical.py` — unit tests for the canonical serializer (float rounding, datetime normalization, enum / tuple / frozenset handling, nested-dataclass recursion, bool-not-int idempotency).
+- `packages/engine/tests/test_regenerate_decision_goldens_idempotent.py` — byte-idempotency guard: regenerating a fixture twice produces identical bytes (catches set-iteration / dict-ordering nondeterminism before it lands).
+- `packages/engine/tests/_golden_helpers.py` — shared helpers (`load_inputs`, `canonical_dumps`, `list_fixtures`, `PLACEHOLDER_MARKER`).
+- `packages/engine/scripts/regenerate_decision_goldens.py` — humans run this locally after intentional schema changes or after authoring a new fixture's `inputs.json`. `--all` or `--fixture NAME`. CI never runs it.
+
+### Bundled companion tooling (same PR per M1.24 spec)
+
+- **`scripts/check_changelog_entry.sh`** — sibling to `check_engine_version_bump.sh`. Fails CI / pre-commit when `packages/engine/engine/version.py` gains a new `__version__` value but `CHANGELOG.md` doesn't gain a matching `## [x.y.z] — YYYY-MM-DD` entry in the same diff. Closes the M1.11a / M1.11b drift class documented in `docs/thread-transitions/2026-05-13-t03-m1.11b-doc-sync.md`. Wired into both `.pre-commit-config.yaml` and `.github/workflows/ci.yml` (guards job).
+- **`apps/api/app/core/config.py:Settings.engine_version` + `Settings.weights_version`** — now sourced from `engine.version.__version__` and `engine.confidence.DEFAULT_WEIGHTS.version` respectively. Previously carried literal defaults (`"0.0.0"` for engine_version originally; never updated). Env vars (`ENGINE_VERSION` / `WEIGHTS_VERSION`) still override the defaults for rare deliberate-stamp cases; in normal operation the engine package is the source of truth. The `/api/v1/version` endpoint automatically reports the live engine value after this change.
+- Two new tests in `apps/api/tests/test_health.py`: `test_version_endpoint_engine_version_sourced_from_package` and `test_version_endpoint_weights_version_sourced_from_package` assert the consolidation holds.
+
+### Phase 1 Done bar tracking
+
+After M1.24 merges and the 12 fixtures are fully populated (3 fixtures shipped with `inputs.json` in this PR; the remaining 9 ship in follow-up commits before the PR flips to ready-for-review):
+
+| Phase 1 Done bar criterion | Status |
+|---|---|
+| 24/24 regime fixtures ≥ 80% accuracy | ✅ (shipped M1.4) |
+| **12/12 golden DailyDecision snapshots match** | ✅ (M1.24) |
+| 5/5 scoring fns at 100% line coverage | ✅ (CI-enforced) |
+| 3/3 Collar Builder intents on seed fixture | ✅ (shipped M1.11a) |
+| 4/4 Playwright E2E flows | ⏳ M1.25 |
+| `pytest --cov=engine` ≥ 85% | ✅ |
+| `mypy --strict engine` clean | ✅ |
+| Helen CSV → DailyDecision + collar in < 5s | ✅ |
+
+M1.25 closes the last Phase 1 Done bar item (Playwright E2E).
+
+### Tests
+
+- `engine.decision` line coverage stays at 100% post-merge (`serialize_canonical` is fully covered by `test_serialize_canonical.py` + the parametrized golden replay).
+- `engine.scoring` 100% coverage unchanged.
+- `guards` CI job gains the `check_changelog_entry.sh` step.
+- 4 new test files added under `packages/engine/tests/`. All pass once the 12 fixtures' `expected.json` files are populated via the regen script.
+
+### Migration
+
+No breaking changes. The new `serialize_canonical` is test-infrastructure only — no production code path imports it. The `Settings` consolidation preserves env-var override behavior; only the literal defaults change.
+
+### Plan deviation
+
+Per M1.24 dev spec Open Question Q1, we resolved in favor of the bump: `engine.decision.serialize.serialize_canonical()` is a new public function under `packages/engine/engine/` and strict ADR-0005 reading qualifies it for a minor bump. `1.6.0 → 1.7.0`. The new `check_changelog_entry.sh` guard now requires the matching `[1.7.0]` entry — this entry.
+
+### Related
+
+- [M1.24 dev spec](./docs/phased-design/phase-1/m1.24-master-decision-goldens.md).
+- [t03 doc-sync transition](./docs/thread-transitions/2026-05-13-t03-m1.11b-doc-sync.md) (motivated the CHANGELOG-entry guard).
+
+---
+
 ## [1.6.0] — 2026-05-12
 
 ### Added (engine — `engine.decision.produce`, M1.11b Collar Builder integration)

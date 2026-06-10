@@ -32,7 +32,7 @@ repos:
       - id: ruff-format
 
   # ---- Project-local guards ------------------------------------------
-  # All three scripts are also invoked from CI (see .github/workflows/ci.yml).
+  # All scripts are also invoked from CI (see .github/workflows/ci.yml).
   - repo: local
     hooks:
       - id: check-next-version
@@ -54,4 +54,15 @@ repos:
         entry: bash scripts/check_engine_version_bump.sh
         language: system
         files: '^packages/engine/engine/'
+        pass_filenames: false
+
+      # M1.24 (plan v1.2 §22.15 L2 + docs/phased-design/phase-1/m1.24-master-decision-goldens.md):
+      # When engine/version.py bumps __version__, CHANGELOG.md must gain a
+      # matching '## [x.y.z] — YYYY-MM-DD' entry in the same diff. Closes the
+      # M1.11a/M1.11b drift class.
+      - id: check-changelog-entry
+        name: Check CHANGELOG entry for engine version bump (per M1.24)
+        entry: bash scripts/check_changelog_entry.sh
+        language: system
+        files: '^(packages/engine/engine/version\.py|CHANGELOG\.md)$'
         pass_filenames: false
