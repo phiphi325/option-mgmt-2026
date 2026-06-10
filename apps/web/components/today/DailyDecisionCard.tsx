@@ -26,6 +26,7 @@
  */
 
 import type { DailyDecision } from "@/lib/decision-types";
+import { ActionList } from "./ActionList";
 import { DecisionHeader } from "./DecisionHeader";
 import { MarketStateBadge } from "./MarketStateBadge";
 import { StrategyTitle } from "./StrategyTitle";
@@ -79,12 +80,15 @@ export function DailyDecisionCard({ decision }: Props) {
 
       <StrategyTitle strategy={strategy} />
 
+      {/* M1.19 — live actions + per-leg execution feasibility (replaces the
+          M1.18 placeholder slot). */}
+      <ActionList decision={decision} />
+
       {/*
-       * M1.19/M1.20/M1.21 placeholders — explicit slots so the layout doesn't
+       * M1.20/M1.21 placeholders — explicit slots so the layout doesn't
        * shift when those milestones fill them in. The grid order matches
        * the master plan §8 component tree.
        */}
-      <PlaceholderCard milestone="M1.19" label="Actions & execution feasibility" />
       <PlaceholderCard milestone="M1.20" label="Confidence breakdown chart" />
       <PlaceholderCard milestone="M1.21" label="Why / Risks / Invalidation" />
 

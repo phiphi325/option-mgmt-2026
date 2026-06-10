@@ -43,9 +43,15 @@ describe("DailyDecisionCard", () => {
     );
   });
 
-  it("renders three placeholder cards for M1.19/M1.20/M1.21", () => {
+  it("renders the live ActionList (M1.19) and keeps the M1.20/M1.21 placeholders", () => {
     render(<DailyDecisionCard decision={fixture()} />);
-    expect(screen.getByTestId("placeholder-M1.19")).toBeInTheDocument();
+    // M1.19: the placeholder is replaced by the live action list.
+    expect(screen.queryByTestId("placeholder-M1.19")).toBeNull();
+    expect(screen.getByTestId("action-list")).toBeInTheDocument();
+    expect(screen.getByTestId("action-row-0")).toHaveTextContent(
+      "Sell Partial Covered Call",
+    );
+    // M1.20 + M1.21 slots remain placeholders until their milestones ship.
     expect(screen.getByTestId("placeholder-M1.20")).toBeInTheDocument();
     expect(screen.getByTestId("placeholder-M1.21")).toBeInTheDocument();
   });

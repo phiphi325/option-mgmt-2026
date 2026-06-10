@@ -1,5 +1,5 @@
 /**
- * TypeScript shapes for the V1 `DailyDecision` payload (M1.18).
+ * TypeScript shapes for the V1 `DailyDecision` payload (M1.18; extended M1.19).
  *
  * The API serializes `DailyDecision` as a loose `dict[str, Any]` for V1 (per
  * the M1.14 PR body — `apps/api/app/schemas/engine.py::decision_to_jsonable_dict`).
@@ -12,6 +12,13 @@
  *  - Required fields are the ones the M1.18 components depend on.
  *  - Other fields are `unknown` so the runtime payload's extras (which the
  *    engine adds freely) don't break the type contract.
+ *
+ * **M1.19 note on numeric types.** The engine uses `float` throughout (per the
+ * collar/execution dataclass docstrings — "Floats (not Decimals) are used
+ * throughout") and the API's `to_jsonable` passes `float`/`int` straight
+ * through to JSON. So strikes, premiums, P&L, slippage, and limit bands arrive
+ * as JSON **numbers**, not Decimal-as-string. Dates (`expiry`) arrive as ISO
+ * strings. The interfaces below reflect the real wire shape.
  *
  * When the engine response schema is tightened in M1.18+, this file gets
  * deleted and the types move into the codegen output.
@@ -30,6 +37,8 @@ export type EmittedAction =
   | "MONETIZE_PUT"
   | "NO_OP"
   | string; // permissive — engine may add new emit codes
+
+export type OrderType = "limit" | "marketable_limit";
 
 export interface DataFreshness {
   readonly any_stale: boolean;
@@ -54,12 +63,95 @@ export interface FlowScoreProjection {
   readonly [k: string]: unknown;
 }
 
+/**
+ * A single recommended action. `parameters` keys depend on the emit code
+ * (`strike`, `expiry`, `qty`, `delta_target`, …); the engine types them as
+ * `dict[str, Any]` but in V1 they are numeric. Rendered generically by
+ * `ActionRow`.
+ */
+export interface Action {
+  readonly emit: EmittedAction;
+  readonly parameters?: Readonly<Record<string, number>>;
+  readonly [k: string]: unknown;
+}
+
 export interface RecommendationProjection {
-  readonly actions?: ReadonlyArray<{
-    readonly emit: EmittedAction;
-    readonly parameters?: Readonly<Record<string, number>>;
-    readonly [k: string]: unknown;
-  }>;
+  readonly actions?: ReadonlyArray<Action>;
+  readonly [k: string]: unknown;
+}
+
+/**
+ * Per-leg execution-feasibility result (engine `engine.execution.types.ExecutionLeg`,
+ * plan §7). All numeric fields are JSON numbers (engine uses `float`/`int`).
+ */
+export interface ExecutionLeg {
+  readonly leg_id: string;
+  readonly liquidity_score: number;
+  readonly spread_bps: number;
+  readonly fill_confidence: number;
+  readonly expected_slippage: number;
+  readonly suggested_order_type: OrderType;
+  readonly limit_price_band: readonly [number, number];
+  readonly size_warnings: readonly string[];
+}
+
+/**
+ * Aggregate execution-feasibility for a multi-leg action (engine
+ * `engine.execution.types.Execution`). `legs` is empty for actions that open
+ * no new legs (REDUCE_COVERAGE / MONETIZE_PUT / NO_OP).
+ */
+export interface Execution {
+  readonly aggregate_liquidity_score: number;
+  readonly aggregate_fill_confidence: number;
+  readonly suggested_order_type: OrderType;
+  readonly legs: readonly ExecutionLeg[];
+  readonly notes: readonly string[];
+}
+
+/**
+ * One leg of a collar (engine `engine.collar_builder.types.CollarLeg`).
+ * `strike`/`delta`/`iv`/`bid`/`ask`/`mid`/`premium` are JSON numbers; `expiry`
+ * is an ISO date string. Sign conventions: `delta` signed by `kind` (CALL > 0,
+ * PUT < 0); `premium` signed by `side` (BUY > 0 = debit paid, SELL < 0 =
+ * credit received).
+ */
+export interface CollarLeg {
+  readonly kind: "PUT" | "CALL";
+  readonly side: "BUY" | "SELL";
+  readonly strike: number;
+  readonly expiry: string;
+  readonly qty: number;
+  readonly delta: number;
+  readonly iv: number;
+  readonly bid: number;
+  readonly ask: number;
+  readonly mid: number;
+  readonly premium: number;
+}
+
+/**
+ * A complete collar candidate (engine `engine.collar_builder.types.CollarStructure`).
+ * P&L fields are per-share numbers. `net_debit_credit > 0` = net debit paid;
+ * `< 0` = net credit received.
+ */
+export interface CollarStructure {
+  readonly name: string;
+  readonly intent: "zero_cost" | "income" | "defensive";
+  readonly horizon_days: number;
+  readonly long_put: CollarLeg;
+  readonly short_call: CollarLeg;
+  readonly net_debit_credit: number;
+  readonly max_gain: number;
+  readonly max_loss: number;
+  readonly upside_breakeven: number;
+  readonly downside_breakeven: number;
+  readonly capped_upside_pct: number;
+  readonly protected_downside_pct: number;
+  readonly confidence: number;
+  readonly rationale?: readonly string[];
+  readonly risks?: readonly string[];
+  readonly invalidation?: readonly string[];
+  readonly execution?: Execution;
   readonly [k: string]: unknown;
 }
 
@@ -80,6 +172,17 @@ export interface DailyDecision {
   readonly weights_version: string;
   readonly inputs_hash: string;
   readonly data_freshness: DataFreshness;
+  /**
+   * Per-action execution feasibility, parallel to
+   * `recommendation.actions[]` (M1.11/M1.13). May be absent on older payloads.
+   */
+  readonly executions?: readonly Execution[];
+  /**
+   * Per-action collar structures, parallel to `recommendation.actions[]`
+   * (M1.11b). `null` for non-`OPEN_COLLAR` actions; a `CollarStructure` for
+   * `OPEN_COLLAR` emits. May be absent on pre-M1.11b payloads.
+   */
+  readonly collar_structures?: ReadonlyArray<CollarStructure | null>;
   /**
    * V1 design choice (M1.14): the response is intentionally loose. M1.18+
    * tightens this once the Today screen's components stabilize. Until then,
