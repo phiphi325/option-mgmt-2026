@@ -14,6 +14,7 @@ Locked decisions for the option-mgmt-2026 codebase. Each ADR is short (1 page) a
 | [0006](./0006-rfc-7807-error-envelope.md) | RFC 7807 ProblemDetails as universal API error shape | Accepted | v1.2 §7 |
 | [0007](./0007-python-version-pin.md) | Python 3.14 pinned across api + engine | Accepted | v1.2 §17 M0.5, §22.15 |
 | [0008](./0008-enhancement-adoption-roadmap.md) | Enhancement-spec adoption roadmap (E1–E9) | Accepted | addendum to v1.2; see [`docs/enhancements/`](../enhancements/) |
+| [0009](./0009-adopt-yearline-statistical-context-provider.md) | Adopt yearline-universe as an external statistical-context provider | Proposed | addendum to v1.2; see [`docs/enhancements/0002-yearline-context-assessment.md`](../enhancements/0002-yearline-context-assessment.md) |
 
 ## Adding an ADR
 
