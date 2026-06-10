@@ -12,6 +12,24 @@ CI guard `scripts/check_engine_version_bump.sh` enforces a version bump on every
 
 ---
 
+## [1.8.0] — 2026-06-10
+
+### Added (engine — `engine.yearline`, OM-Y1 yearline-integration contract)
+
+- **`engine.yearline.YearlineContext`** — frozen Pydantic value object mirroring yearline-universe's V13.8 adapter contract (`adapter_version = "v13_8_yearline_context_adapter_v1"`): structural-regime fields (`repair_active`, `distance_to_ma250_pct`, `post_confirmation_trend_state`), gated retry probability (`p_retry` / `gate_passed` / `p_retry_basis`), conditional days-to-touch range, gated success/composite fields, and the `must_not_auto_execute` invariant. `frozen=True` + `extra="forbid"` (un-pinned producer fields fail loudly).
+- **`engine.yearline.PRetryBasis`** — StrEnum (`empirical` / `blend`) for the retry-probability surface provenance.
+- **`engine.yearline.ACCEPTED_ADAPTER_VERSIONS` / `ACCEPTED_SCHEMA_VERSIONS`** — the pinned accepted producer-contract version range (per ADR-0009).
+
+### Added (tooling / codegen — does NOT live under `packages/engine/engine/`)
+
+- `packages/shared-types/scripts/generate.py` gains `dict[K, V] → Readonly<Record<string, V>>` and `Literal[…] → "a" | true` TS mappings; emits `packages/shared-types/src/yearline.ts` (`YearlineContext` + `PRetryBasis`) and re-exports it from `index.ts`. The codegen drift gate covers the new contract.
+- `packages/engine/tests/fixtures/yearline/` vendors the V13.8 gated + stale fixtures (+ the producer JSON schema); `packages/engine/tests/test_yearline_contract.py` (9 tests) is the cross-repo contract test — parses both fixtures, pins the accepted `adapter_version`/`schema_version` range, and guards against contract drift.
+
+### Notes
+
+- **No decision-behaviour change.** OM-Y1 only defines + pins the contract; the engine does not yet consume it (that is OM-Y4). A `DailyDecision` produced without yearline context is byte-identical and hashes identically to 1.7.0. The engine does **not** import yearline-universe (ADR-0005). Per ADR-0009 + `docs/enhancements/0002-yearline-context-assessment.md`.
+- Minor bump (1.7.0 → 1.8.0): new public contract, no schema change to existing types.
+
 ## [1.7.0] — 2026-05-13
 
 ### Added (engine — `engine.decision.serialize`, M1.24 golden-test infrastructure)
