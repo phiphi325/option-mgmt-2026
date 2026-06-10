@@ -17,8 +17,8 @@ file as each OM-Y milestone lands.
 | OM-Y0 | enhancement assessment + ADR (no code) | ✅ merged | — | PR #6 (`8566aa3`) |
 | OM-Y1 | `YearlineContext` contract + TS codegen + contract test | ✅ merged | 1.8.0 | PR #7 (`7ce8902`, `e773d1d`) |
 | OM-Y2 | ingestion + persistence + hydration | ✅ merged | 1.8.0 (no bump) | PR #8 (`325e518`) |
-| OM-Y3 | read-only Today-screen evidence panel (card + headline line) | ✅ pushed, PR open | 1.8.0 (no bump) | `feat/om-y3-yearline-panel` (rebased on main) |
-| OM-Y4 | gated engine consumption (the prize) | ⏳ not started | — | — |
+| OM-Y3 | read-only Today-screen evidence panel (card + headline line) | ✅ merged | 1.8.0 (no bump) | PR #9 |
+| OM-Y4 | gated engine consumption (the prize) | ⏳ **deferred — after Phase 1 / M1.25 calibration** (see HANDOFF §1.5) | — | — |
 | OM-Y5 | stretch (Market-State enrichment / collar intent) | ⏳ not started | — | — |
 
 The hard rule, upheld throughout: **`packages/engine` never imports

@@ -18,16 +18,37 @@ acceptance evidence) and the decision record
 | OM-Y0 | enhancement assessment + ADR-0009 (no code) | ✅ merged (PR #6) |
 | OM-Y1 | `engine.yearline.YearlineContext` contract + TS codegen + contract test; engine 1.7.0→1.8.0 | ✅ merged (PR #7) |
 | OM-Y2 | `yearline_context` table + ingest job + hydration service | ✅ merged (PR #8) |
-| OM-Y3 | read-only Today panel (card + headline distance-to-MA250 line) | ✅ pushed, PR open (`feat/om-y3-yearline-panel`) |
-| **OM-Y4** | **gated engine consumption — the prize** | ⏳ **not started** (next) |
+| OM-Y3 | read-only Today panel (card + headline distance-to-MA250 line) | ✅ merged (PR #9) |
+| **OM-Y4** | **gated engine consumption — the prize** | ⏳ **deferred — after Phase 1 (see §1.5)** |
 | OM-Y5 | stretch: Market-State enrichment / collar-intent | ⏳ not started |
 
 The **C-track (read-only) is essentially done**: ingest → persist → hydrate →
 surface. OM-Y4 is the **A-track** (let the gated signal influence the decision).
 
-**Branch state when this was written:** `feat/om-y3-yearline-panel` is rebased on
-`upstream/main` (knowlingo) and carries one commit. Once it merges, branch OM-Y4
-off the updated main.
+**Branch state:** OM-Y3 merged (PR #9). Branch OM-Y4 off the updated main when the
+time comes (see §1.5 first).
+
+---
+
+## 1.5 Sequencing decision — do OM-Y4 *after* Phase 1's decision + calibration surface
+
+**OM-Y4 is intentionally deferred until after Phase 1 (specifically M1.25).** Rationale:
+
+- OM-Y4 is the only **output-changing** yearline step — it touches `rules.yaml` + the
+  Confidence Composer (ADR-0003) + the replay hash + `weights_version`. Mutating the
+  decision mid-Phase-1 fights the M1.24 golden lock and the in-flight UI milestones
+  (M1.19–M1.23).
+- Its own acceptance gate ("only if the signal earns it") **needs Phase-1 infra that
+  isn't built yet** — the **Outcome Tracker** (M1.23 + M1.17 data) and **Calibration**
+  (M1.25) are how you'd justify the gated Confidence component's weights instead of
+  guessing them.
+- The read-only **C-track (OM-Y0–Y3) already delivers the user value with zero decision
+  risk** — so there's no pressure to rush the A-track.
+
+**So:** finish Phase 1 (especially M1.25 calibration), then start OM-Y4 when the
+composer change can be *calibrated* rather than guessed. This decision is mirrored in
+`docs/phased-design/phase-1/README.md` (under the M1.25 row). The build itself is §2
+below — ready whenever you return.
 
 ---
 
