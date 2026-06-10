@@ -32,7 +32,7 @@ import types
 import typing
 from enum import EnumMeta as EnumType  # EnumMeta is the portable alias (== EnumType in 3.11+)
 from pathlib import Path
-from typing import Any, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin
 
 # `typing.Union` and `types.UnionType` (3.10+) are both valid origins for a
 # union annotation, depending on Python version + how the annotation was written:
@@ -49,9 +49,9 @@ if hasattr(types, "UnionType"):
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "packages" / "engine"))
 
-from pydantic import BaseModel  # noqa: E402
-
 from engine import profiles, regimes, types  # noqa: E402
+from engine.yearline import types as yearline_types  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
 OUT_DIR = _REPO_ROOT / "packages" / "shared-types" / "src"
 
@@ -104,6 +104,27 @@ def _ts_type(annotation: Any) -> str:
         if type(None) in args:
             return f"{' | '.join(rendered)} | null"
         return " | ".join(rendered)
+
+    # Literal["a", "b"] → "a" | "b"; Literal[True] → true. bool before int
+    # because bool is a subclass of int.
+    if origin is Literal:
+        parts: list[str] = []
+        for a in args:
+            if isinstance(a, bool):
+                parts.append("true" if a else "false")
+            elif isinstance(a, str):
+                parts.append(f'"{a}"')
+            elif isinstance(a, (int, float)):
+                parts.append(str(a))
+            else:
+                raise TypeError(f"unhandled Literal arg {a!r}")
+        return " | ".join(parts)
+
+    # dict[K, V] → Readonly<Record<string, V>>. JSON object keys are always
+    # strings (int keys round-trip as strings), so the TS key type is `string`
+    # regardless of K.
+    if origin is dict:
+        return f"Readonly<Record<string, {_ts_type(args[1])}>>"
 
     # tuple[T, ...]  →  readonly T[]
     if origin is tuple:
@@ -193,12 +214,24 @@ def _render_types() -> str:
     )
 
 
+def _render_yearline() -> str:
+    return "".join(
+        [
+            HEADER,
+            _emit_str_enum(yearline_types.PRetryBasis),
+            "\n",
+            _emit_model(yearline_types.YearlineContext),
+        ]
+    )
+
+
 def _render_index() -> str:
     return (
         HEADER
         + 'export * from "./regimes";\n'
         + 'export * from "./profiles";\n'
         + 'export * from "./types";\n'
+        + 'export * from "./yearline";\n'
     )
 
 
@@ -206,6 +239,7 @@ FILES: dict[str, callable] = {  # type: ignore[type-arg]
     "regimes.ts": _render_regimes,
     "profiles.ts": _render_profiles,
     "types.ts": _render_types,
+    "yearline.ts": _render_yearline,
     "index.ts": _render_index,
 }
 
