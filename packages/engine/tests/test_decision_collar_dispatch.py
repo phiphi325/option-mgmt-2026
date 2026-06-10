@@ -10,7 +10,7 @@ and the M1.11a retrospective recommendations:
      len(strike_selections)` holds.
   4. The M1.12 downgrade ladder is not invoked on collar dispatch
      (the collar builder owns its own liquidity gating).
-  5. Engine version reports `1.7.0` (was `1.6.0` at M1.11b ship; bumped by M1.24).
+  5. Engine version reports `1.8.0` (1.6.0 at M1.11b ship; 1.7.0 at M1.24; bumped by OM-Y1).
   6. BS deltas (M1.11b rec #1) are threaded into the collar builder
      via the produce.py dispatcher (verified indirectly via the
      CollarStructure.long_put.delta + short_call.delta fields).
@@ -376,10 +376,10 @@ class TestProduceWithCollarDispatch:
         b = produce_daily_decision(**kwargs)
         assert a == b
 
-    def test_engine_version_is_1_7_0(self) -> None:
-        """M1.11b bumped to 1.6.0; M1.24 subsequently bumped to 1.7.0
-        (per the M1.24 dev spec Open Question Q1)."""
-        assert engine.__version__ == "1.7.0"
+    def test_engine_version_is_1_8_0(self) -> None:
+        """M1.24 bumped to 1.7.0; OM-Y1 subsequently bumped to 1.8.0 for the
+        new `engine.yearline.YearlineContext` contract."""
+        assert engine.__version__ == "1.8.0"
         result = produce_daily_decision(
             as_of=_AS_OF_DT,
             ticker="MSFT",
@@ -389,7 +389,7 @@ class TestProduceWithCollarDispatch:
             market_state=_market_state(),
             flow_score=_flow_score(),
         )
-        assert result.engine_version == "1.7.0"
+        assert result.engine_version == "1.8.0"
 
     def test_collar_structure_has_bs_delta_when_iv_present(self) -> None:
         """Recommendation #1 from M1.11a retrospective: BS deltas are

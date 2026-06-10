@@ -11,12 +11,11 @@ from engine.collar_builder import (
 )
 
 
-def test_engine_version_is_1_7_0() -> None:
-    """M1.24 bumped engine 1.6.0 → 1.7.0 per Open Question Q1 of the M1.24 dev
-    spec (new public function `engine.decision.serialize_canonical` qualifies
-    for a minor bump under strict ADR-0005 reading). Historical bumps preserved
-    in CHANGELOG.md."""
-    assert engine.__version__ == "1.7.0"
+def test_engine_version_is_1_8_0() -> None:
+    """OM-Y1 bumped engine 1.7.0 → 1.8.0 — a minor bump for the new public
+    `engine.yearline.YearlineContext` contract (no schema change to existing
+    types). M1.24 was the 1.7.0 bump. Historical bumps preserved in CHANGELOG.md."""
+    assert engine.__version__ == "1.8.0"
 
 
 def test_collar_builder_types_exported_via_engine_namespace() -> None:
