@@ -6,7 +6,7 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 
 ## Status
 
-**Phase 1 — Engine MVP. In progress.** Engine `1.7.0`. The decision pipeline is feature-complete end-to-end through M1.13, the **Master Decision Engine auto-dispatches `OPEN_COLLAR` emits** to the Collar Builder (M1.11b — `produce_daily_decision()` attaches a `CollarStructure` to `DailyDecision.collar_structures` when the rule pipeline emits `OPEN_COLLAR`), the **public API surface is shipped** (M1.14–M1.17.5 + M1.16a: 18 endpoints), the **Today screen scaffolding is live** (M1.18), the **Collar Builder is engine + dispatch + API complete** (M1.11a engine + M1.11b dispatch + M1.16a endpoint), and the **M1.24 golden `DailyDecision` suite is locked** (12 regenerated snapshots + `engine.decision.serialize_canonical` + CHANGELOG-drift CI guard). Next up: **M1.19 (ActionList + ActionRow + ExecutionBadge)** — the first frontend consumer of `DailyDecision.collar_structures`.
+**Phase 1 — Engine MVP. In progress.** Engine `1.8.0`. The decision pipeline is feature-complete end-to-end through M1.13, the **Master Decision Engine auto-dispatches `OPEN_COLLAR` emits** to the Collar Builder (M1.11b — `produce_daily_decision()` attaches a `CollarStructure` to `DailyDecision.collar_structures` when the rule pipeline emits `OPEN_COLLAR`), the **public API surface is shipped** (M1.14–M1.17.5 + M1.16a: 18 endpoints), the **Today screen scaffolding is live** (M1.18), the **Collar Builder is engine + dispatch + API complete** (M1.11a engine + M1.11b dispatch + M1.16a endpoint), and the **M1.24 golden `DailyDecision` suite is locked** (12 regenerated snapshots + `engine.decision.serialize_canonical` + CHANGELOG-drift CI guard, shipped at engine `1.7.0`). The engine is at **`1.8.0`** because the parallel **yearline** track's OM-Y1 `YearlineContext` contract bumped it past M1.24 (see the Yearline integration section below). Next up: **M1.19 (ActionList + ActionRow + ExecutionBadge)** — the first frontend consumer of `DailyDecision.collar_structures`.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-transitions/`](./docs/thread-transitions/) for thread-by-thread handoff records.
 
@@ -71,7 +71,7 @@ Adopts **yearline-universe** (an external MA250 repair/retry statistical-context
 | ✅ | OM-Y0 — enhancement assessment + ADR-0009 (no code) | [#6](https://github.com/knowlingo/option-mgmt-2026/pull/6) | — |
 | ✅ | OM-Y1 — `engine.yearline.YearlineContext` contract + Pydantic→TS codegen (`dict`/`Literal` support) + cross-repo contract test | [#7](https://github.com/knowlingo/option-mgmt-2026/pull/7) | `1.8.0` |
 | ✅ | OM-Y2 — `yearline_context` table + idempotent ingest job + hydration service (`→ YearlineContext \| None`) | [#8](https://github.com/knowlingo/option-mgmt-2026/pull/8) | — |
-| ✅ | OM-Y3 — read-only Today-screen evidence panel: card + headline distance-to-MA250 line (Recharts) + `GET /engine/yearline-context`; `DailyDecision` byte-identical | (PR open) | — |
+| ✅ | OM-Y3 — read-only Today-screen evidence panel: card + headline distance-to-MA250 line (Recharts) + `GET /engine/yearline-context`; `DailyDecision` byte-identical | [#9](https://github.com/knowlingo/option-mgmt-2026/pull/9) | — |
 | | OM-Y4 — **gated engine consumption** (`produce_daily_decision(..., yearline_context=)`, 4th replay pin, `rules.yaml` clauses + gated Confidence component; output-changing) | — | — |
 | | OM-Y5 — stretch: Market-State enrichment (ADR-0002 amendment) / collar-intent keyed off yearline readiness | — | — |
 
