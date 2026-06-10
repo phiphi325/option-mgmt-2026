@@ -27,7 +27,9 @@
 
 import type { DailyDecision } from "@/lib/decision-types";
 import { ActionList } from "./ActionList";
+import { ConfidenceBreakdownChart } from "./ConfidenceBreakdownChart";
 import { DecisionHeader } from "./DecisionHeader";
+import { ExecutionFeasibilityPanel } from "./ExecutionFeasibilityPanel";
 import { MarketStateBadge } from "./MarketStateBadge";
 import { StrategyTitle } from "./StrategyTitle";
 
@@ -84,12 +86,19 @@ export function DailyDecisionCard({ decision }: Props) {
           M1.18 placeholder slot). */}
       <ActionList decision={decision} />
 
+      {/* M1.20 — confidence breakdown + aggregate execution feasibility
+          (replaces the M1.18 placeholder slot). */}
+      <ConfidenceBreakdownChart
+        confidence={decision.confidence}
+        breakdown={decision.confidence_breakdown}
+      />
+      <ExecutionFeasibilityPanel executions={decision.executions ?? []} />
+
       {/*
-       * M1.20/M1.21 placeholders — explicit slots so the layout doesn't
-       * shift when those milestones fill them in. The grid order matches
-       * the master plan §8 component tree.
+       * M1.21 placeholder — explicit slot so the layout doesn't shift when
+       * that milestone fills it in. The grid order matches the master plan §8
+       * component tree.
        */}
-      <PlaceholderCard milestone="M1.20" label="Confidence breakdown chart" />
       <PlaceholderCard milestone="M1.21" label="Why / Risks / Invalidation" />
 
       <footer

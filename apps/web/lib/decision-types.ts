@@ -156,6 +156,26 @@ export interface CollarStructure {
 }
 
 /**
+ * The Confidence Composer's explainable output (engine
+ * `engine.confidence.types.ConfidenceBreakdown`, plan §22.13 multiplicative
+ * redesign). Four positive components + two penalties, all in `[0, 1]`, plus
+ * the two §22.13 derived intermediates (`positive_score` = pre-penalty
+ * weighted average; `penalty_multiplier` = aggregate multiplier). Their
+ * product (post-clip) equals the final `DailyDecision.confidence`.
+ */
+export interface ConfidenceBreakdown {
+  readonly flow_alignment: number;
+  readonly structure_alignment: number;
+  readonly regime_match: number;
+  readonly signal_alignment: number;
+  readonly event_risk_penalty: number;
+  readonly illiquidity_penalty: number;
+  readonly positive_score: number;
+  readonly penalty_multiplier: number;
+  readonly weights_version: string;
+}
+
+/**
  * Minimal `DailyDecision` shape the Today screen depends on. Permissive
  * (`[k: string]: unknown`) so engine-added fields don't break.
  */
@@ -183,6 +203,12 @@ export interface DailyDecision {
    * `OPEN_COLLAR` emits. May be absent on pre-M1.11b payloads.
    */
   readonly collar_structures?: ReadonlyArray<CollarStructure | null>;
+  /**
+   * The Confidence Composer breakdown behind `confidence` (M1.10 / §22.13).
+   * Optional only for defensiveness against partial payloads; the engine
+   * always emits it.
+   */
+  readonly confidence_breakdown?: ConfidenceBreakdown;
   /**
    * V1 design choice (M1.14): the response is intentionally loose. M1.18+
    * tightens this once the Today screen's components stabilize. Until then,
