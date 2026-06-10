@@ -261,3 +261,45 @@ export interface DailyDecisionResponse {
    */
   readonly is_new_row: boolean;
 }
+
+/* -------------------------------------------------------------------------- *
+ * User strategy profile (M1.22 — Settings screen)
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The user-controllable inputs to the engine (engine
+ * `engine.profiles.UserStrategyProfile`, plan §11). Edited on the Settings
+ * screen (M1.22) and persisted via `PUT /api/v1/profile`; the API layer
+ * hydrates it into every `/engine/daily-plan` call.
+ *
+ * The three enum unions mirror the engine's `StrEnum`s **exactly** — the wire
+ * form is the lower-case `.value` of each member (`StrEnum` serialises to its
+ * string value). All numeric fields arrive as JSON numbers;
+ * `min_iv_rank_for_short_premium` is an integer `[0, 100]` and the three
+ * fraction fields are `[0, 1]`. These bounds are enforced authoritatively by
+ * the API's `ProfileUpdateRequest` Pydantic model (`extra="forbid"` + `Field`
+ * range validators); the form keeps inputs in range with native `min`/`max`
+ * attributes rather than a client-side schema library (M1.22 Path A).
+ */
+export type RiskTolerance = "conservative" | "moderate" | "aggressive";
+export type IncomeNeed = "low" | "medium" | "high";
+export type ProfileStyle = "income" | "balanced" | "growth";
+
+export interface UserStrategyProfile {
+  /** Downside-variance comfort. Drives collar/put bias. */
+  readonly risk_tolerance: RiskTolerance;
+  /** Premium-income preference. Drives covered-call coverage at fixed risk. */
+  readonly income_need: IncomeNeed;
+  /** Position-sizing cap as a fraction of portfolio NAV, `[0, 1]`. */
+  readonly max_position_pct: number;
+  /** Coverage cap — fraction of long shares that may be written against, `[0, 1]`. */
+  readonly max_coverage_pct: number;
+  /** Minimum IV rank (`0..100`, integer) before short-premium strategies fire. */
+  readonly min_iv_rank_for_short_premium: number;
+  /** When `true`, prefer a collar over a plain covered call when both qualify. */
+  readonly prefer_collars_over_covered_calls: boolean;
+  /** Worst-case drawdown the user will tolerate, `[0, 1]`. Drives §22.8 predicates. */
+  readonly drawdown_tolerance: number;
+  /** Overall portfolio style. Drives §22.8 `profile_style` rule predicates. */
+  readonly style: ProfileStyle;
+}
