@@ -19,6 +19,9 @@ function fixture(overrides: Partial<DailyDecision> = {}): DailyDecision {
           parameters: { target_delta: 0.25, target_dte: 30, size_pct: 0.5 },
         },
       ],
+      rationale: ["IV rank 78 favours selling premium", "Pin risk elevated near max pain"],
+      risks: ["Capped upside on a breakout"],
+      invalidation: ["IV rank falls below 40"],
     },
     confidence: 0.62,
     confidence_breakdown: {
@@ -63,20 +66,23 @@ describe("DailyDecisionCard", () => {
     );
   });
 
-  it("renders the live ActionList (M1.19) + ConfidenceChart/ExecutionPanel (M1.20), keeping only the M1.21 placeholder", () => {
+  it("renders all live sections (M1.19/M1.20/M1.21) with no placeholders remaining", () => {
     render(<DailyDecisionCard decision={fixture()} />);
-    // M1.19: the placeholder is replaced by the live action list.
-    expect(screen.queryByTestId("placeholder-M1.19")).toBeNull();
+    // M1.19: live action list.
     expect(screen.getByTestId("action-list")).toBeInTheDocument();
     expect(screen.getByTestId("action-row-0")).toHaveTextContent(
       "Sell Partial Covered Call",
     );
-    // M1.20: the placeholder is replaced by the confidence chart + execution panel.
-    expect(screen.queryByTestId("placeholder-M1.20")).toBeNull();
+    // M1.20: confidence chart + execution panel.
     expect(screen.getByTestId("confidence-chart")).toBeInTheDocument();
     expect(screen.getByTestId("execution-feasibility-panel")).toBeInTheDocument();
-    // M1.21 slot remains a placeholder until that milestone ships.
-    expect(screen.getByTestId("placeholder-M1.21")).toBeInTheDocument();
+    // M1.21: Why/Risks/Invalidation drawer section.
+    expect(screen.getByTestId("rationale-section")).toBeInTheDocument();
+    expect(screen.getByTestId("drawer-why")).toHaveTextContent(
+      "IV rank 78 favours selling premium",
+    );
+    // The Phase-1 component tree is complete — no placeholders remain.
+    expect(screen.queryAllByTestId(/^placeholder-/)).toHaveLength(0);
   });
 
   it("falls back to NO_OP strategy when recommendation.actions is empty", () => {

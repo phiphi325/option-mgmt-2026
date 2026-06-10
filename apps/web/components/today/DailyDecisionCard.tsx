@@ -8,19 +8,16 @@
  *   DecisionHeader        ← ticker / spot / as_of / freshness
  *   MarketStateBadge      ← regime + tags
  *   StrategyTitle         ← human-readable strategy name
- *   ActionList            ← M1.19 placeholder
- *   ConfidenceBreakdown   ← M1.20 placeholder
- *   Drawer (Why/Risks/…)  ← M1.21 placeholder
+ *   ActionList            ← M1.19 (live)
+ *   ConfidenceBreakdown   ← M1.20 (live)
+ *   WatchLevels + Drawers ← M1.21 (live)
  *
- * M1.18 fills the first three sections with real data and places explicit
- * `<PlaceholderCard>` blocks for the M1.19–M1.21 slots. The grid layout
- * stays stable across those milestones; subsequent PRs replace each
- * placeholder in-place without re-architecting.
+ * M1.18 scaffolded the first three sections + placeholder slots; M1.19–M1.21
+ * filled every slot in-place. As of M1.21 the card contains no
+ * `<PlaceholderCard>` elements — the Phase-1 component tree is complete.
  *
  * Marked `"use client"` because:
  *  - the regime-token color application is client-side
- *  - the eventual M1.19/M1.20/M1.21 placeholders become interactive (drawer
- *    expand/collapse, hover charts)
  *  - the page → card transition is the boundary; the page itself stays
  *    server-component for fast TTFB.
  */
@@ -30,32 +27,15 @@ import { ActionList } from "./ActionList";
 import { ConfidenceBreakdownChart } from "./ConfidenceBreakdownChart";
 import { DecisionHeader } from "./DecisionHeader";
 import { ExecutionFeasibilityPanel } from "./ExecutionFeasibilityPanel";
+import { InvalidationDrawer } from "./InvalidationDrawer";
 import { MarketStateBadge } from "./MarketStateBadge";
+import { RationaleDrawer } from "./RationaleDrawer";
+import { RisksDrawer } from "./RisksDrawer";
 import { StrategyTitle } from "./StrategyTitle";
+import { WatchLevels } from "./WatchLevels";
 
 interface Props {
   decision: DailyDecision;
-}
-
-interface PlaceholderProps {
-  milestone: string;
-  label: string;
-}
-
-function PlaceholderCard({ milestone, label }: PlaceholderProps) {
-  return (
-    <div
-      className="rounded-lg border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground"
-      data-testid={`placeholder-${milestone}`}
-    >
-      <p className="font-medium text-foreground">
-        {label} <span className="text-xs">— coming in {milestone}</span>
-      </p>
-      <p className="mt-1 text-xs">
-        Slot reserved by M1.18; replaced in-place when {milestone} ships.
-      </p>
-    </div>
-  );
 }
 
 export function DailyDecisionCard({ decision }: Props) {
@@ -94,12 +74,26 @@ export function DailyDecisionCard({ decision }: Props) {
       />
       <ExecutionFeasibilityPanel executions={decision.executions ?? []} />
 
-      {/*
-       * M1.21 placeholder — explicit slot so the layout doesn't shift when
-       * that milestone fills it in. The grid order matches the master plan §8
-       * component tree.
-       */}
-      <PlaceholderCard milestone="M1.21" label="Why / Risks / Invalidation" />
+      {/* M1.21 — watch levels + Why/Risks/Invalidation drawers (replaces the
+          final M1.18 placeholder slot; completes the Phase-1 component tree). */}
+      <WatchLevels
+        above={decision.recommendation?.watch_levels?.above ?? []}
+        below={decision.recommendation?.watch_levels?.below ?? []}
+        ivRankDropBelow={decision.recommendation?.watch_levels?.iv_rank_drop_below ?? null}
+      />
+      <div
+        className="divide-y divide-border rounded-md border border-border"
+        data-testid="rationale-section"
+      >
+        <RationaleDrawer
+          label="Why"
+          items={decision.recommendation?.rationale ?? []}
+          defaultOpen
+          className="px-3"
+        />
+        <RisksDrawer items={decision.recommendation?.risks ?? []} />
+        <InvalidationDrawer items={decision.recommendation?.invalidation ?? []} />
+      </div>
 
       <footer
         className="border-t border-border pt-4 text-xs text-muted-foreground"

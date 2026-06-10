@@ -75,8 +75,39 @@ export interface Action {
   readonly [k: string]: unknown;
 }
 
+/**
+ * A single price level to monitor (M1.21). `label` is a short descriptor like
+ * "max pain", "support", "resistance", "long put strike".
+ *
+ * NOTE (engine gap): the V1 engine `RecommendationResult` does **not** yet emit
+ * a `watch_levels` field — only `rationale` / `risks` / `invalidation` /
+ * `warnings`. `WatchLevels` is therefore a forward-typed seam: the component
+ * renders only once a future engine milestone populates
+ * `recommendation.watch_levels`. Until then it degrades to nothing.
+ */
+export interface WatchLevel {
+  readonly price: number;
+  readonly label: string;
+}
+
+export interface WatchLevels {
+  readonly above: readonly WatchLevel[];
+  readonly below: readonly WatchLevel[];
+  readonly iv_rank_drop_below: number | null;
+}
+
 export interface RecommendationProjection {
   readonly actions?: ReadonlyArray<Action>;
+  /** Rationale bullets rendered by the M1.21 "Why" drawer. */
+  readonly rationale?: readonly string[];
+  /** Risk caveats rendered by the M1.21 "Risks" drawer. */
+  readonly risks?: readonly string[];
+  /** Invalidation conditions rendered by the M1.21 drawer. */
+  readonly invalidation?: readonly string[];
+  /** Independent caveat strings (low confidence, event proximity, …). */
+  readonly warnings?: readonly string[];
+  /** Forward-typed; not emitted by the V1 engine yet (see `WatchLevels`). */
+  readonly watch_levels?: WatchLevels;
   readonly [k: string]: unknown;
 }
 
