@@ -6,7 +6,7 @@ Long equity + tactical options overlay. Deterministic, audit-trail-first, engine
 
 ## Status
 
-**Phase 1 — Engine MVP. In progress.** Engine `1.6.0`, ~840 tests on `main`. The decision pipeline is feature-complete end-to-end through M1.13, the **Master Decision Engine now auto-dispatches `OPEN_COLLAR` emits** to the Collar Builder (M1.11b — `produce_daily_decision()` attaches a `CollarStructure` to `DailyDecision.collar_structures` when the rule pipeline emits `OPEN_COLLAR`), the **public API surface is shipped** (M1.14–M1.17.5 + M1.16a: 18 endpoints), the **Today screen scaffolding is live** (M1.18), and the **Collar Builder is engine + dispatch + API complete** (M1.11a engine + M1.11b dispatch + M1.16a endpoint). Next up: **M1.19 (ActionList + ActionRow + ExecutionBadge)** — the first frontend consumer of `DailyDecision.collar_structures`.
+**Phase 1 — Engine MVP. In progress.** Engine `1.7.0`. The decision pipeline is feature-complete end-to-end through M1.13, the **Master Decision Engine auto-dispatches `OPEN_COLLAR` emits** to the Collar Builder (M1.11b — `produce_daily_decision()` attaches a `CollarStructure` to `DailyDecision.collar_structures` when the rule pipeline emits `OPEN_COLLAR`), the **public API surface is shipped** (M1.14–M1.17.5 + M1.16a: 18 endpoints), the **Today screen scaffolding is live** (M1.18), the **Collar Builder is engine + dispatch + API complete** (M1.11a engine + M1.11b dispatch + M1.16a endpoint), and the **M1.24 golden `DailyDecision` suite is locked** (12 regenerated snapshots + `engine.decision.serialize_canonical` + CHANGELOG-drift CI guard). Next up: **M1.19 (ActionList + ActionRow + ExecutionBadge)** — the first frontend consumer of `DailyDecision.collar_structures`.
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-transitions/`](./docs/thread-transitions/) for thread-by-thread handoff records.
 
@@ -53,9 +53,10 @@ See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-tr
 | ✅ | M1.11a — Collar Builder engine module (`engine.collar_builder.build()`; 3 intents: `zero_cost`/`income`/`defensive`; grid-search solver per §9.10) | [#56](https://github.com/csupenn/option-mgmt-2026/pull/56) | `1.5.0` |
 | ✅ | M1.16a — `POST /engine/collar-builder` (thin service + Pydantic schemas + router; §22.11 H5 `underlying_qty` from DB only; 9 tests) | [#60](https://github.com/csupenn/option-mgmt-2026/pull/60) | — |
 | ✅ | M1.11b — Collar Builder integration into Master Decision (`_dispatch_open_collar` helper in `produce.py`; `DailyDecision.collar_structures` parallel tuple; 2-leg `StrikeSelection` projection via `_project_collar_to_strike_selection`; `underlying_qty < 100` falls back to 100 per shipped impl) | [#58](https://github.com/csupenn/option-mgmt-2026/pull/58) | `1.6.0` |
-| | M1.19–M1.25 — ActionList, ConfidenceBreakdownChart, WatchLevels, Profile UI, Outcome Tracker, Golden tests, Calibration + Playwright | — | — |
+| ✅ | M1.24 — Golden `DailyDecision` suite (`engine.decision.serialize_canonical` + 12 regenerated fixtures + parametrized replay harness + suite-level meta tests + regen script) + companion tooling (`scripts/check_changelog_entry.sh`, `Settings` engine_version/weights_version consolidation) | [#3](https://github.com/knowlingo/option-mgmt-2026/pull/3) | `1.7.0` |
+| | M1.19–M1.23, M1.25 — ActionList, ConfidenceBreakdownChart, WatchLevels, Profile UI, Outcome Tracker, Calibration + Playwright | — | — |
 
-**Where we are.** The decision pipeline is end-to-end live in production. `produce_daily_decision()` (M1.13) wires Market State → Flow Score → Recommendation → Strike Selector → Execution Feasibility + Downgrade → Confidence Composer into one `DailyDecision` with three-pin replay safety. **M1.11b** (PR #58) added collar dispatch: when the M1.9 rule pipeline emits `OPEN_COLLAR` (regime ∈ {`HIGH_IV_EVENT`, `POST_EVENT_REPRICE`} AND no existing collar legs), `produce_daily_decision()` now calls `collar_builder.build(intents=[ZERO_COST])` via the `_dispatch_open_collar` helper and attaches the resulting two-leg `CollarStructure` to `DailyDecision.collar_structures` (parallel to `strike_selections`). M1.14–M1.17.5 + M1.16a expose every engine sub-step over HTTP (18 endpoints). M1.18 ships the Today screen scaffolding with `getDailyPlan()` server-rendering the headline card. M1.11a shipped the Collar Builder engine module; M1.16a adds the API endpoint (`POST /engine/collar-builder`) with thin service layer + §22.11 H5 `underlying_qty`-from-DB enforcement.
+**Where we are.** The decision pipeline is end-to-end live in production. `produce_daily_decision()` (M1.13) wires Market State → Flow Score → Recommendation → Strike Selector → Execution Feasibility + Downgrade → Confidence Composer into one `DailyDecision` with three-pin replay safety. **M1.11b** (PR #58) added collar dispatch: when the M1.9 rule pipeline emits `OPEN_COLLAR` (regime ∈ {`HIGH_IV_EVENT`, `POST_EVENT_REPRICE`} AND no existing collar legs), `produce_daily_decision()` now calls `collar_builder.build(intents=[ZERO_COST])` via the `_dispatch_open_collar` helper and attaches the resulting two-leg `CollarStructure` to `DailyDecision.collar_structures` (parallel to `strike_selections`). M1.14–M1.17.5 + M1.16a expose every engine sub-step over HTTP (18 endpoints). M1.18 ships the Today screen scaffolding with `getDailyPlan()` server-rendering the headline card. M1.11a shipped the Collar Builder engine module; M1.16a adds the API endpoint (`POST /engine/collar-builder`) with thin service layer + §22.11 H5 `underlying_qty`-from-DB enforcement. **M1.24** (PR #3, engine `1.7.0`) locks the `DailyDecision` wire shape with 12 golden snapshots replayed through `engine.decision.serialize_canonical` (canonical JSON, 6-decimal float rounding) — the meta tests assert coverage of all 8 emit codes, both collar paths, M1.12 escalation, and all 6 regimes — plus a `check_changelog_entry.sh` CI guard and `Settings` version consolidation so `/version` reports the live engine value.
 
 **Milestone-numbering correction.** PRs #36 and #37 were originally labeled "M1.7" and "M1.8" respectively; per plan v1.2 §17 the actual milestone numbers are swapped (Strike Selector is M1.7 size L; Recommendation Engine is M1.8 size M). The functional code is correct in both PRs — only the PR titles + branch names mis-labeled the milestone. The table above shows the canonical plan §17 mapping; CHANGELOG `[1.0.0]` documents the correction.
 
@@ -101,7 +102,7 @@ apps/
   api/              # FastAPI — engine endpoints                        [shipped M0.3]
   jobs/             # (Phase 2) scheduled ingestion — consolidated into apps/api/app/jobs/ in P1
 packages/
-  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.6.0]
+  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.7.0]
     config/         # YAML configs (filesystem boundary per ADR-0005)
       rules.yaml            # Recommendation Engine V1 rules            [M1.9]
       weights.yaml          # Confidence Composer V1 weights (v2.0)     [M1.10]
@@ -110,7 +111,7 @@ packages/
       regimes.py            # 6 locked regimes + REGIME_SPEC table      [M0.6 / M1.4]
       profiles.py           # UserStrategyProfile + ProfileStyle        [M0.6 / M1.9]
       types.py              # OptionContract + ChainSnapshot            [M0.6]
-      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.6.0]
+      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.7.0]
       greeks.py             # BS delta/gamma/vega/theta/rho             [M1.6]
       market_state/         # M1.1-M1.4 — produces MarketStateResult
         iv.py               # IV rank + IV percentile                   [M1.1]
@@ -161,6 +162,7 @@ packages/
       decision/             # M1.13 — Master Decision Engine + replay; M1.11b — Collar dispatch
         produce.py          # produce_daily_decision() orchestrator    [M1.13 / M1.11b collar dispatch]
         hashing.py          # compute_inputs_hash() (canonical JSON)   [M1.13]
+        serialize.py        # serialize_canonical() golden serializer  [M1.24]
         types.py            # DailyDecision frozen dataclass           [M1.13 / M1.11b +collar_structures]
       collar_builder/       # M1.11a — first-class structural-strategy engine
         build.py            # build() entry; dispatches per-intent     [M1.11a]
