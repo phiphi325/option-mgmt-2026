@@ -11,17 +11,31 @@
  */
 
 import { DailyDecisionCard } from "@/components/today/DailyDecisionCard";
+import { YearlinePanel } from "@/components/today/yearline/YearlinePanel";
 import { getDailyPlan } from "@/lib/api/engine";
+import { getYearlineContext } from "@/lib/api/yearline";
+import type { YearlinePanelResponse } from "@/lib/yearline-types";
 
 export const dynamic = "force-dynamic"; // per-user + per-now; never cache
 
 export default async function TodayPage() {
   // V1 hardcodes the ticker; M4.11 generalizes to multi-ticker.
-  const { decision } = await getDailyPlan({ ticker: "MSFT" });
+  const ticker = "MSFT";
+  const { decision } = await getDailyPlan({ ticker });
+
+  // The yearline panel is supplementary (OM-Y3) — a failure here must NOT
+  // break the headline decision. Degrade to no panel.
+  let yearline: YearlinePanelResponse | null = null;
+  try {
+    yearline = await getYearlineContext({ ticker });
+  } catch {
+    yearline = null;
+  }
 
   return (
-    <main className="container mx-auto py-12 px-4">
+    <main className="container mx-auto py-12 px-4 space-y-8">
       <DailyDecisionCard decision={decision} />
+      {yearline && <YearlinePanel panel={yearline} />}
     </main>
   );
 }

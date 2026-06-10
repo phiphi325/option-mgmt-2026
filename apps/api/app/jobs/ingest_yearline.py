@@ -37,6 +37,8 @@ from engine.yearline import ACCEPTED_ADAPTER_VERSIONS, YearlineContext
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.yearline import ACCEPTED_SERIES_VERSIONS, YearlineTrendSeriesModel
+
 IngestStatus = Literal["inserted", "updated", "unchanged"]
 
 
@@ -165,11 +167,113 @@ async def ingest_yearline_file(
     return await ingest_yearline_context(session=session, artifact=raw)
 
 
+# ----------------------------------------------------------------------
+# Trend series (presentation-only artifact, OM-Y3)
+# ----------------------------------------------------------------------
+
+
+def parse_trend_series(
+    artifact: dict[str, Any] | YearlineTrendSeriesModel,
+) -> YearlineTrendSeriesModel:
+    """Validate a raw trend-series artifact + pin its version + persistability.
+
+    Raises:
+        pydantic.ValidationError: artifact violates the schema (incl. extra fields).
+        ValueError("incompatible_series_version" | "unavailable_series" |
+            "missing_as_of" | "missing_ticker"): parses but cannot be persisted.
+    """
+    model = (
+        artifact
+        if isinstance(artifact, YearlineTrendSeriesModel)
+        else YearlineTrendSeriesModel.model_validate(artifact)
+    )
+    if model.series_version not in ACCEPTED_SERIES_VERSIONS:
+        raise ValueError(
+            f"incompatible_series_version: {model.series_version!r} not in "
+            f"{sorted(ACCEPTED_SERIES_VERSIONS)}."
+        )
+    # Only `available` series with a (ticker, as_of) are persistable; the
+    # `available: false` empty state is never stored — its absence drives the
+    # panel's empty placeholder.
+    if not model.available:
+        raise ValueError("unavailable_series: available=false; nothing to persist.")
+    if model.as_of is None:
+        raise ValueError("missing_as_of: series has no as_of; cannot persist.")
+    if model.ticker is None:
+        raise ValueError("missing_ticker: series has no ticker; cannot persist.")
+    return model
+
+
+_TREND_UPSERT_SQL = text(
+    """
+    INSERT INTO yearline_trend_series (
+        ticker, as_of, series_version, schema_version, model_stack_version,
+        payload, payload_hash
+    )
+    VALUES (
+        :ticker, CAST(:as_of AS date), :series_version, :schema_version,
+        :model_stack_version, CAST(:payload AS jsonb), :payload_hash
+    )
+    ON CONFLICT (ticker, as_of) DO UPDATE SET
+        series_version      = EXCLUDED.series_version,
+        schema_version      = EXCLUDED.schema_version,
+        model_stack_version = EXCLUDED.model_stack_version,
+        payload             = EXCLUDED.payload,
+        payload_hash        = EXCLUDED.payload_hash,
+        ingested_at         = now()
+    WHERE yearline_trend_series.payload_hash IS DISTINCT FROM EXCLUDED.payload_hash
+    RETURNING (xmax = 0) AS inserted;
+    """
+)
+
+
+async def ingest_yearline_trend_series(
+    *,
+    session: AsyncSession,
+    artifact: dict[str, Any] | YearlineTrendSeriesModel,
+) -> IngestResult:
+    """Validate + idempotently upsert one trend-series artifact. Commits."""
+    model = parse_trend_series(artifact)
+    payload = model.model_dump(mode="json")
+    payload_hash = compute_payload_hash(payload)
+    assert model.as_of is not None and model.ticker is not None  # narrowed by parse
+    as_of_iso = model.as_of.isoformat()
+
+    result = await session.execute(
+        _TREND_UPSERT_SQL,
+        {
+            "ticker": model.ticker,
+            "as_of": as_of_iso,
+            "series_version": model.series_version,
+            "schema_version": model.schema_version,
+            "model_stack_version": model.model_stack_version,
+            "payload": json.dumps(payload),
+            "payload_hash": payload_hash,
+        },
+    )
+    row = result.first()
+    await session.commit()
+
+    if row is None:
+        status: IngestStatus = "unchanged"
+    else:
+        status = "inserted" if bool(row[0]) else "updated"
+
+    return IngestResult(
+        status=status,
+        ticker=model.ticker,
+        as_of=as_of_iso,
+        payload_hash=payload_hash,
+    )
+
+
 __all__ = [
     "IngestResult",
     "IngestStatus",
     "compute_payload_hash",
     "ingest_yearline_context",
     "ingest_yearline_file",
+    "ingest_yearline_trend_series",
     "parse_artifact",
+    "parse_trend_series",
 ]

@@ -45,6 +45,7 @@ from app.schemas.engine import (
     CollarStructureResponse,
     decision_to_jsonable_dict,
 )
+from app.schemas.yearline import YearlinePanelResponse
 from app.services.collar_builder_service import run_collar_builder
 from app.services.decision_service import (
     produce_and_persist,
@@ -55,6 +56,10 @@ from app.services.decision_service import (
     run_strike_candidates,
     run_what_if,
 )
+from app.services.yearline_panel_service import (
+    read_latest_trend_series,
+    read_latest_yearline_context,
+)
 
 router = APIRouter(prefix="/engine", tags=["engine"])
 
@@ -62,6 +67,34 @@ router = APIRouter(prefix="/engine", tags=["engine"])
 # B008 (Depends in argument defaults) per docs/engineering-principles.md.
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 AuthedUserDep = Annotated[str, Depends(get_authenticated_user_id)]
+
+
+@router.get(
+    "/yearline-context",
+    response_model=YearlinePanelResponse,
+    summary="Read-only yearline evidence panel (scalar context + trend series)",
+)
+async def get_yearline_context(
+    ticker: str,
+    session: SessionDep,
+    user_id: AuthedUserDep,
+) -> YearlinePanelResponse:
+    """OM-Y3 read-only panel data for `ticker`.
+
+    Returns the **raw latest** scalar `YearlineContext` (may be `is_stale` —
+    the panel shows staleness honestly, unlike the engine-facing hydration that
+    abstains) plus the latest `available` `YearlineTrendSeries` (or `None` →
+    the panel renders its empty state). Read-only: no decision is run, no row is
+    written, `DailyDecision` is untouched (ADR-0009).
+
+    `user_id` gates access (Today-screen content) but is not used in the query —
+    yearline context is market-wide, not user-scoped.
+    """
+    _ = user_id
+    t = ticker.upper()
+    context = await read_latest_yearline_context(session=session, ticker=t)
+    trend_series = await read_latest_trend_series(session=session, ticker=t)
+    return YearlinePanelResponse(ticker=t, context=context, trend_series=trend_series)
 
 
 @router.post(

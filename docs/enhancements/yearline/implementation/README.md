@@ -16,8 +16,8 @@ file as each OM-Y milestone lands.
 |---|---|---|---|---|
 | OM-Y0 | enhancement assessment + ADR (no code) | ✅ merged | — | PR #6 (`8566aa3`) |
 | OM-Y1 | `YearlineContext` contract + TS codegen + contract test | ✅ merged | 1.8.0 | PR #7 (`7ce8902`, `e773d1d`) |
-| OM-Y2 | ingestion + persistence + hydration | ✅ implemented (pending merge) | 1.8.0 (no bump) | `feat/om-y2-yearline-ingest` |
-| OM-Y3 | read-only Today-screen evidence panel | ⏳ not started | — | — |
+| OM-Y2 | ingestion + persistence + hydration | ✅ merged | 1.8.0 (no bump) | PR #8 (`325e518`) |
+| OM-Y3 | read-only Today-screen evidence panel (card + headline line) | ✅ pushed, PR open | 1.8.0 (no bump) | `feat/om-y3-yearline-panel` (rebased on main) |
 | OM-Y4 | gated engine consumption (the prize) | ⏳ not started | — | — |
 | OM-Y5 | stretch (Market-State enrichment / collar intent) | ⏳ not started | — | — |
 
@@ -150,6 +150,67 @@ stub. The `as_of` upper bound prevents peeking at future data (replay determinis
 - No engine consumption / replay-hash extension — that is **OM-Y4**.
 - No scheduled artifact reader (object-store / nightly cron) — the producer side stays
   `workflow_dispatch`-first until OM-Y2 is merged + a CI contract test is wired.
+
+---
+
+## OM-Y3 — read-only evidence panel (implemented, pending merge)
+
+The first user-visible value + the first `apps/web` work. **Scope chosen: card +
+headline line** (the single distance-to-MA250 line; the remaining §6 panels are a
+follow-up). Charting: **Recharts** (3.8.x, React-19 compatible). Trend series:
+**persisted** in its own table (symmetric with OM-Y2). Read-only — `DailyDecision`
+is untouched. No engine change (no version bump).
+
+### Backend
+
+| Path | Role |
+|---|---|
+| `apps/api/app/db/migrations/versions/0005_yearline_trend_series.py` | `yearline_trend_series` table; `UNIQUE(ticker, as_of)` + index |
+| `apps/api/app/schemas/yearline.py` | `YearlineTrendSeriesModel` (presentation-only, `extra="forbid"`) + `ACCEPTED_SERIES_VERSIONS` + `YearlinePanelResponse` |
+| `apps/api/app/jobs/ingest_yearline.py` | + `parse_trend_series` / `ingest_yearline_trend_series` (idempotent upsert; rejects `available:false`, un-pinned `series_version`, missing ticker/as_of) |
+| `apps/api/app/services/yearline_panel_service.py` | display reads — latest **raw** context (incl. stale) + latest series |
+| `apps/api/app/routers/engine.py` | `GET /engine/yearline-context?ticker=…` → `YearlinePanelResponse` (auth-gated; returns raw context + series, either may be `null`) |
+
+The panel endpoint reads the **raw** context (shows staleness honestly), distinct
+from the engine-facing hydration which abstains on stale.
+
+### Frontend (`apps/web`)
+
+| Path | Role |
+|---|---|
+| `lib/yearline-types.ts` | `YearlineTrendSeries` + `YearlinePanelResponse` TS types; `toDistancePoints` (pure, null-preserving) |
+| `lib/api/yearline.ts` | server-only `getYearlineContext` (JWT cookie, `no-store`) |
+| `components/today/yearline/YearlineCard.tsx` | current-state card — gated `P(retry≤H)` bars (withheld where un-gated), stale badge, dormant→trend-state, basis chip, `P(success)` only where gated, disclaimer |
+| `components/today/yearline/YearlineTrendChart.tsx` | Recharts headline distance-to-MA250 line; 0% reference line (the yearline); `connectNulls={false}` gaps |
+| `components/today/yearline/YearlinePanel.tsx` | container — unavailable placeholder / card / chart-empty states |
+| `app/today/page.tsx` | fetches the panel alongside the daily plan; a yearline failure degrades to no panel (never breaks the decision) |
+| `package.json` / `pnpm-lock.yaml` | `recharts ^3.8.1` |
+
+### Gate-respect on the display boundary (UX §4.1 / §6.3)
+
+- per-horizon `P(retry≤H)` shown only where `gate_passed[h]`; else **"withheld ·
+  building evidence"** (never hidden — the withheld state is the signal).
+- `P(success)` / composite shown only where `success_gate_passed`.
+- dormant (`repair_active=false`) → trend state, no synthesized retry prob.
+- `is_stale` → explicit badge. Trend line **gaps** `null` (no interpolation).
+
+### Acceptance evidence
+
+- **Verified end-to-end against real Postgres + a live uvicorn**: 7 smoke tests
+  pass (OM-Y2's 4 + OM-Y3's 3), including the full HTTP `GET /engine/yearline-context`
+  round-trip (auth → DB reads → serialized panel payload) and trend-series ingest
+  idempotency. Migration `0005` up/down round-trips.
+- **api**: `ruff` clean · `mypy --strict app` clean (47 files) · suite **98 passed,
+  31 skipped** (14 new yearline unit tests).
+- **web**: `tsc --noEmit` clean · `eslint` clean · `vitest` **70 passed** (12 files;
+  new YearlineCard/YearlinePanel/`toDistancePoints` tests) · `next build` succeeds
+  (Recharts SSR + the `"use client"` boundary).
+
+### Deferred to a follow-up
+
+- The remaining §6 panels (price/MA overlay, 0-1 trend scores, gated-risk hazard /
+  `p_retry_40d`) + regime-band shading + the "today blended" marker. The headline
+  line + the full card ship here.
 
 ---
 
