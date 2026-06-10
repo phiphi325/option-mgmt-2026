@@ -46,3 +46,19 @@ export function formatBps(bps: number): string {
 export function formatPct(fraction: number): string {
   return `${Math.round(fraction * 100)}%`;
 }
+
+/**
+ * Format an outcome P&L value (M1.23). The value arrives as a JSON **string**
+ * (the `/outcomes` API serialises its `Decimal` columns to strings — see
+ * `lib/outcome-types.ts`) or `null`. We coerce with `Number(...)` for **display
+ * only** — the raw string is what we send back to the API, so a stored value is
+ * never float-rounded. Renders signed USD (`+$1,234.00` / `-$500.00`); `"—"`
+ * for `null`, empty, or unparseable input.
+ */
+export function formatPnl(raw: string | null): string {
+  if (raw === null || raw.trim() === "") return "—";
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+  return `${sign}${USD.format(Math.abs(n))}`;
+}

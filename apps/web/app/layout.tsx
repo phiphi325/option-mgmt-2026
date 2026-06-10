@@ -11,10 +11,11 @@ export const metadata: Metadata = {
 };
 
 /**
- * Minimal Phase-1 top navigation (M1.22). Two surfaces ship in Phase 1 —
- * Today and Settings; Outcomes lands with M1.23. Static links (no active-state
- * styling) keep this a server component. The exact nav chrome is intentionally
- * lightweight per the M1.22 spec ("exact nav chrome is implementation detail").
+ * Minimal Phase-1 top navigation (M1.22; Outcomes added M1.23). The three
+ * Phase-1 surfaces are Today, Settings, and Outcomes. Static links (no
+ * active-state styling) keep this a server component. The exact nav chrome is
+ * intentionally lightweight per the M1.22 spec ("exact nav chrome is
+ * implementation detail").
  */
 function SiteHeader() {
   return (
@@ -32,6 +33,12 @@ function SiteHeader() {
             className="transition-colors hover:text-foreground"
           >
             Settings
+          </Link>
+          <Link
+            href="/outcomes"
+            className="transition-colors hover:text-foreground"
+          >
+            Outcomes
           </Link>
         </div>
       </nav>
