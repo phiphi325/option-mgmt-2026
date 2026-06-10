@@ -36,7 +36,23 @@ Phase 1 ships the engine-first MVP per master plan §17. Aggregate size: ~5 week
 | M1.22 | User Strategy Profile UI + persona presets | M | planned | TBD |
 | M1.23 | Outcome manual entry + history view | M | planned | TBD |
 | M1.24 | Golden tests (12 DailyDecision snapshots) + companion tooling housekeeping (CHANGELOG drift guard + `Settings` engine_version/weights_version consolidation) | M | shipped | [PR #3](https://github.com/knowlingo/option-mgmt-2026/pull/3) → `7fec498`. [Dev spec](./m1.24-master-decision-goldens.md) (incl. post-ship reconciliation). Engine `1.6.0` → `1.7.0`. 12 named fixtures under `tests/fixtures/master_decisions/` + parametrized `pytest` replay harness + `engine.decision.serialize_canonical` + regeneration script + suite-level meta tests. Bundles `scripts/check_changelog_entry.sh` and `Settings` consolidation. **Goldens regenerated via [PR #4](https://github.com/knowlingo/option-mgmt-2026/pull/4)** (phiphi325) which also fixed an `iv_rank`/`iv_percentile`/`iv_rank_change_1d` `[0-100]`→`[0-1]` fixture-scale bug. Closes 3 of the 4 remaining Phase 1 Done bar items; M1.25 closes the last (Playwright E2E). |
-| M1.25 | Calibration tests + Playwright E2E + polish | M | planned | TBD |
+| M1.25 | Calibration tests + Playwright E2E + polish | M | planned | TBD — the Playwright E2E flows should also cover the **yearline evidence panel** (OM-Y3) on `/today`, including its empty/stale states (decide whether it gets its own flow). |
+
+> **Yearline OM-Y4 sequencing — deferred until after Phase 1's decision + calibration surface.**
+> The yearline **read-only** track (OM-Y0–Y3) is merged and parallel to Phase 1. The
+> next yearline step, **OM-Y4 (gated engine consumption)**, is intentionally **held
+> until after M1.25**, because:
+> - OM-Y4 is the only *output-changing* yearline step — it touches `rules.yaml` + the
+>   Confidence Composer (ADR-0003) + the replay hash + `weights_version`. Mutating the
+>   decision mid-Phase-1 fights the M1.24 golden lock and the in-flight UI milestones.
+> - Its own acceptance gate ("only if the signal earns it") needs Phase-1 infra that
+>   isn't built yet — the **Outcome Tracker** (M1.23 + M1.17 data) and **Calibration**
+>   (M1.25) are how you'd justify the gated component's weights instead of guessing them.
+> - The read-only C-track already delivers the user value with zero decision risk.
+>
+> So: finish Phase 1 (esp. M1.25 calibration), then do OM-Y4 when the composer change
+> can be calibrated. Full build steps + traps:
+> [`docs/enhancements/yearline/implementation/HANDOFF.md`](../../enhancements/yearline/implementation/HANDOFF.md).
 
 ## Status legend
 
