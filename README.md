@@ -62,6 +62,21 @@ See [`CHANGELOG.md`](./CHANGELOG.md) for per-version detail and [`docs/thread-tr
 
 See plan v1.2 §17 for the full milestone table; §22 is the canonical correction sheet (audit-resolved 2026-05-09).
 
+### Yearline integration (enhancement track, parallel to Phase 1) — OM-Y0…Y5
+
+Adopts **yearline-universe** (an external MA250 repair/retry statistical-context engine) as a jobs-layer-hydrated, **gated** `YearlineContext` value object the pure engine optionally consumes. External provider → its own ADR + folder, not part of the E1–E9 spec series. Boundary, gate-respect, and the 4th replay pin are locked in [ADR-0009](./docs/decisions/0009-adopt-yearline-statistical-context-provider.md).
+
+| | What | PR | Engine |
+|---|---|---|---|
+| ✅ | OM-Y0 — enhancement assessment + ADR-0009 (no code) | [#6](https://github.com/knowlingo/option-mgmt-2026/pull/6) | — |
+| ✅ | OM-Y1 — `engine.yearline.YearlineContext` contract + Pydantic→TS codegen (`dict`/`Literal` support) + cross-repo contract test | [#7](https://github.com/knowlingo/option-mgmt-2026/pull/7) | `1.8.0` |
+| ✅ | OM-Y2 — `yearline_context` table + idempotent ingest job + hydration service (`→ YearlineContext \| None`) | [#8](https://github.com/knowlingo/option-mgmt-2026/pull/8) | — |
+| ✅ | OM-Y3 — read-only Today-screen evidence panel: card + headline distance-to-MA250 line (Recharts) + `GET /engine/yearline-context`; `DailyDecision` byte-identical | (PR open) | — |
+| | OM-Y4 — **gated engine consumption** (`produce_daily_decision(..., yearline_context=)`, 4th replay pin, `rules.yaml` clauses + gated Confidence component; output-changing) | — | — |
+| | OM-Y5 — stretch: Market-State enrichment (ADR-0002 amendment) / collar-intent keyed off yearline readiness | — | — |
+
+**The hard rule:** `packages/engine` never imports yearline-universe (ADR-0005). Coupling is a persisted, versioned artifact. **Resume point + traps:** [`docs/enhancements/yearline/implementation/HANDOFF.md`](./docs/enhancements/yearline/implementation/HANDOFF.md).
+
 ## Stack
 
 | Layer | Pin | Source of truth |
@@ -86,7 +101,7 @@ Read [`docs/`](./docs/) before any code change:
 - [`docs/ssot-constants-map.md`](./docs/ssot-constants-map.md) — canonical home for every shared constant.
 - [`docs/disclaimers.md`](./docs/disclaimers.md) — full educational-use disclaimer text.
 - [`docs/decisions/`](./docs/decisions/) — ADRs (engine-first, regime taxonomy, confidence composer, ...).
-- [`docs/enhancements/`](./docs/enhancements/) — third-party enhancement specs + per-spec assessments. Adoption decisions live in ADRs.
+- [`docs/enhancements/`](./docs/enhancements/) — third-party enhancement specs + per-spec assessments. Adoption decisions live in ADRs. Includes the [`yearline/`](./docs/enhancements/yearline/) integration track (assessment, ADR-0009, [`implementation/`](./docs/enhancements/yearline/implementation/) as-built record + [`HANDOFF.md`](./docs/enhancements/yearline/implementation/HANDOFF.md) resume-point).
 - [`docs/thread-transitions/`](./docs/thread-transitions/) — per-AI-thread handoff records. One file per thread, capturing what shipped + decisions + handoff brief.
 - [`docs/tutorials/`](./docs/tutorials/) — long-form pedagogical tutorials (Market State, Scoring Primitives, Flow Score, Confidence Composer, Master Decision Engine, **Collar Builder**) + the [`engine-api-reference.md`](./docs/tutorials/engine-api-reference.md) covering M1.14–M1.17.5's 17 HTTP endpoints.
 - [`docs/phased-design/phase-1/`](./docs/phased-design/phase-1/) — milestone roster + per-milestone dev specs (M1.15–M1.18, M1.11a, M1.11b). The [`review/`](./docs/phased-design/phase-1/review/) subfolder hosts post-merge code-quality retrospectives.
@@ -102,7 +117,7 @@ apps/
   api/              # FastAPI — engine endpoints                        [shipped M0.3]
   jobs/             # (Phase 2) scheduled ingestion — consolidated into apps/api/app/jobs/ in P1
 packages/
-  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.7.0]
+  engine/           # Python — the product (pure functions, no I/O)     [scaffolded M0.6; engine 1.8.0]
     config/         # YAML configs (filesystem boundary per ADR-0005)
       rules.yaml            # Recommendation Engine V1 rules            [M1.9]
       weights.yaml          # Confidence Composer V1 weights (v2.0)     [M1.10]
@@ -111,7 +126,8 @@ packages/
       regimes.py            # 6 locked regimes + REGIME_SPEC table      [M0.6 / M1.4]
       profiles.py           # UserStrategyProfile + ProfileStyle        [M0.6 / M1.9]
       types.py              # OptionContract + ChainSnapshot            [M0.6]
-      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.7.0]
+      version.py            # __version__ — bumped per ADR-0005         [M0.6 → 1.8.0]
+      yearline/             # YearlineContext gated value object         [OM-Y1; engine 1.8.0]
       greeks.py             # BS delta/gamma/vega/theta/rho             [M1.6]
       market_state/         # M1.1-M1.4 — produces MarketStateResult
         iv.py               # IV rank + IV percentile                   [M1.1]
